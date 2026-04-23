@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useStore } from './store';
 import { formatCurrency, formatDate } from './lib/utils';
-import { Database, LogOut, CheckCircle2, UploadCloud, AlertCircle } from 'lucide-react';
+import { Database, LogOut, CheckCircle2, UploadCloud, AlertCircle, ArrowUp, ArrowDown, MoreVertical } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
 const formatSheetStatus = (status?: string) => {
   switch(status) {
@@ -18,8 +19,8 @@ export default function App() {
   const { 
     session, filters, masterData, orders, selectedOrderEntry, selectedSublines,
     setFilters, selectOrder, toggleSubline, toggleAllSublines, connect, disconnect,
-    syncMasterData, cancelOrder, generateInvoice, getSimulationPayload, fetchOrders,
-    batchSelectedOrders, isProcessingBatch, batchProgress, toggleBatchSelection, toggleAllBatchSelection, closeBatchOrders
+    syncMasterData, generateInvoice, getSimulationPayload, fetchOrders,
+    batchSelectedOrders, isProcessingBatch, batchProgress, toggleBatchSelection, toggleAllBatchSelection
   } = useStore();
 
   const [inputUrl, setInputUrl] = useState(session.url);
@@ -28,17 +29,57 @@ export default function App() {
   const [inputPass, setInputPass] = useState('');
   const [isSimulating, setIsSimulating] = useState(false);
   const [isFetchingOrders, setIsFetchingOrders] = useState(false);
+  const [sortColumn, setSortColumn] = useState<string | null>('docNum');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [activeMenu, setActiveMenu] = useState<number | null>(null);
+
+  // Close auto menu on click outside
+  useEffect(() => {
+    const handleGlobalClick = () => setActiveMenu(null);
+    if (activeMenu !== null) {
+      document.addEventListener('click', handleGlobalClick);
+      return () => document.removeEventListener('click', handleGlobalClick);
+    }
+  }, [activeMenu]);
 
   // Derived state: filtered orders
   const filteredOrders = useMemo(() => {
     return orders.filter(o => 
-      !o.isCancelled &&
       o.bplid === filters.bplid &&
       (filters.rut ? o.cardCode.includes(filters.rut) : true) &&
       (filters.project ? o.documentLines.some(l => l.project?.includes(filters.project)) : true) &&
       (filters.cc ? o.documentLines.some(l => l.costCenter?.includes(filters.cc)) : true)
     );
   }, [orders, filters]);
+
+  const sortedOrders = useMemo(() => {
+    const sorted = [...filteredOrders];
+    if (sortColumn) {
+      sorted.sort((a, b) => {
+        let valA: any = a[sortColumn as keyof typeof a];
+        let valB: any = b[sortColumn as keyof typeof b];
+
+        if (sortColumn === 'costCenter') {
+          valA = a.documentLines[0]?.costCenter || '';
+          valB = b.documentLines[0]?.costCenter || '';
+        }
+
+        if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+        if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+    return sorted;
+  }, [filteredOrders, sortColumn, sortDirection]);
+
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
 
   const selectedOrder = orders.find(o => o.docEntry === selectedOrderEntry);
   const jsonPayload = getSimulationPayload();
@@ -245,31 +286,56 @@ export default function App() {
               <p className="text-xs text-slate-500 italic">Esperando credenciales...</p>
             )}
           </div>
-          <div className="flex gap-2 shrink-0 ml-4">
-            <div className="relative overflow-hidden inline-[block]">
+            <div className="flex gap-2 shrink-0 ml-4 items-center">
+              <button 
+                onClick={async () => {
+                  const XLSX = await import('xlsx');
+                  const worksheet = XLSX.utils.aoa_to_sheet([
+                    ["Ceco", "Doc venta", "Fecha de ganado", "Fecha TE4 Inscrito"],
+                    ["200", "540001479", "01-01-2024", ""],
+                    ["300", "540001480", "01-01-2024", "15-02-2024"],
+                    ["200", "540001481", "", "15-02-2024"],
+                    ["300", "21007-540001482", "01-01-2024", ""]
+                  ]);
+                  const workbook = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(workbook, worksheet, "Plantilla");
+                  XLSX.writeFile(workbook, "Plantilla_Cruce_OVs.xlsx");
+                }}
+                className="text-[10px] uppercase font-bold tracking-widest text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded transition-colors mr-2 border border-emerald-200 cursor-pointer"
+              >
+                Descargar Plantilla Excel
+              </button>
+              <div className="relative overflow-hidden inline-[block]">
               <input 
                 type="file" 
-                accept=".csv"
+                accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
                 id="csvUpload"
                 className="absolute inset-0 opacity-0 cursor-pointer"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
                     const reader = new FileReader();
-                    reader.onload = (event) => {
-                      if (typeof event.target?.result === 'string') {
-                        import('papaparse').then(Papa => {
-                          Papa.parse(event.target!.result as string, {
-                            header: true,
-                            complete: (results: any) => {
-                              useStore.getState().syncSheetsData(results.data);
-                              alert("¡Planilla Sheets (CSV) cruzada exitosamente con las Órdenes de SAP B1!");
-                            }
-                          });
-                        });
+                    reader.onload = async (event) => {
+                      if (event.target?.result) {
+                        try {
+                          const data = new Uint8Array(event.target.result as ArrayBuffer);
+                          const XLSX = await import('xlsx');
+                          const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                          const firstSheetName = workbook.SheetNames[0];
+                          const worksheet = workbook.Sheets[firstSheetName];
+                          
+                          // Format dates to avoid unparseable values depending on Excel version
+                          const resultsData = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false, dateNF: "yyyy-mm-dd" });
+                          
+                          useStore.getState().syncSheetsData(resultsData);
+                          alert("¡Planilla Excel/CSV cruzada exitosamente con las Órdenes de SAP B1!");
+                        } catch (error) {
+                          console.error("Error validando el archivo:", error);
+                          alert("Ocurrió un error al leer el archivo. Intenta guardarlo nuevamente como XLSX o CSV.");
+                        }
                       }
                     };
-                    reader.readAsText(file);
+                    reader.readAsArrayBuffer(file);
                   }
                 }}
               />
@@ -278,7 +344,7 @@ export default function App() {
                 disabled={!session.isConnected}
               >
                 <UploadCloud className="w-3.5 h-3.5" />
-                Sincronizar Sheets (CSV)
+                Sincronizar Lote (Excel/CSV)
               </button>
             </div>
             <button 
@@ -295,35 +361,6 @@ export default function App() {
         {/* Tables Container (Split Layout) */}
         <div className="flex-1 p-6 space-y-6 overflow-hidden flex flex-col relative z-0">
           
-          {/* Batch Floating Header */}
-          {batchSelectedOrders.length > 0 && (
-            <div className="absolute top-8 left-1/2 -translate-x-1/2 z-30 bg-slate-900 text-white px-5 py-2.5 rounded-full font-sans shadow-2xl border border-slate-700 flex items-center gap-4 animate-in slide-in-from-top-4 fade-in">
-              <span className="text-xs font-semibold">{batchSelectedOrders.length} OVs seleccionadas para lote</span>
-              <div className="h-4 w-px bg-slate-600"></div>
-              {isProcessingBatch ? (
-                <span className="text-xs font-medium text-amber-400 flex items-center gap-2">
-                   <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
-                   Procesando {batchProgress?.current || 0} de {batchProgress?.total || 0}...
-                </span>
-              ) : (
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={closeBatchOrders}
-                    className="text-[11px] font-bold text-red-400 hover:text-red-300 transition-colors uppercase tracking-widest bg-red-950/50 px-3 py-1 rounded"
-                  >
-                    Cerrar OVs en SBO
-                  </button>
-                  <button 
-                    onClick={() => toggleAllBatchSelection(false)}
-                    className="text-[10px] text-slate-400 hover:text-white transition-colors"
-                  >
-                    (Desmarcar Todo)
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Data Quality Center */}
           {useStore(state => state.sheetAnomalies).length > 0 && (
             <section className="bg-amber-50 border border-amber-200 rounded-lg shadow-sm p-4 animate-in fade-in slide-in-from-top-4 shrink-0">
@@ -373,9 +410,45 @@ export default function App() {
               </div>
             )}
             
-            <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
-              <h2 className="text-xs font-bold text-slate-700 uppercase tracking-tight">Órdenes de Ventas Vigentes</h2>
-              <span className="text-[10px] font-medium text-slate-400">{filteredOrders.length} registros encontrados</span>
+            <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0 min-h-[48px]">
+              {batchSelectedOrders.length > 0 ? (
+                <div className="flex items-center gap-4 w-full animate-in fade-in">
+                  <span className="text-xs font-semibold text-blue-700">{batchSelectedOrders.length} Seleccionadas</span>
+                  <div className="h-4 w-px bg-slate-300"></div>
+                  {isProcessingBatch ? (
+                    <span className="text-xs font-medium text-blue-600 flex items-center gap-2">
+                       <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                       Procesando Masivo {batchProgress?.current || 0} / {batchProgress?.total || 0}...
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => useStore.getState().invoiceBatchOrders()}
+                        className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 transition-colors bg-emerald-100 hover:bg-emerald-200 px-3 py-1 rounded border border-emerald-200 shadow-sm"
+                      >
+                        Facturar Masivo
+                      </button>
+                      <button 
+                        onClick={() => useStore.getState().closeBatchOrders()}
+                        className="text-[11px] font-bold text-red-700 hover:text-red-800 transition-colors bg-red-100 hover:bg-red-200 px-3 py-1 rounded border border-red-200 shadow-sm"
+                      >
+                        Cerrar Masivo
+                      </button>
+                      <button 
+                        onClick={() => toggleAllBatchSelection(false)}
+                        className="text-[11px] text-slate-500 hover:text-slate-700 transition-colors ml-2 underline underline-offset-2"
+                      >
+                        Desmarcar Todo
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <h2 className="text-xs font-bold text-slate-700 uppercase tracking-tight">Órdenes de Ventas Vigentes</h2>
+                  <span className="text-[10px] font-medium text-slate-400">{filteredOrders.length} registros encontrados</span>
+                </>
+              )}
             </div>
             <div className="flex-1 overflow-auto">
               <table className="w-full text-xs text-left border-collapse">
@@ -384,29 +457,72 @@ export default function App() {
                     <th className="p-3 font-semibold w-10 text-center">
                       <input 
                         type="checkbox"
-                        disabled={filteredOrders.length === 0 || isProcessingBatch}
+                        disabled={sortedOrders.length === 0 || isProcessingBatch}
                         className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                        checked={filteredOrders.length > 0 && batchSelectedOrders.length === filteredOrders.length}
+                        checked={sortedOrders.length > 0 && batchSelectedOrders.length === sortedOrders.length}
                         onChange={(e) => toggleAllBatchSelection(e.target.checked)}
                       />
                     </th>
-                    <th className="p-3 font-semibold w-24">Nº OV (DocNum)</th>
-                    <th className="p-3 font-semibold w-20">DocEntry</th>
-                    <th className="p-3 font-semibold w-32">RUT / SN</th>
-                    <th className="p-3 font-semibold w-28">F. Documento</th>
-                    <th className="p-3 font-semibold w-24 text-center">Estado Operativo</th>
-                    <th className="p-3 font-semibold max-w-[120px]">C. Costo (Ej)</th>
-                    <th className="p-3 font-semibold text-right w-28">Total (Neto)</th>
-                    <th className="p-3 font-semibold text-center w-24">Acción</th>
+                    <th className="p-3 font-semibold w-24 cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('docNum')}>
+                      <div className="flex items-center gap-1">
+                        Nº OV
+                        {sortColumn === 'docNum' && (sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />)}
+                        {sortColumn !== 'docNum' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
+                      </div>
+                    </th>
+                    <th className="p-3 font-semibold w-20 cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('docEntry')}>
+                      <div className="flex items-center gap-1">
+                        DocEntry
+                        {sortColumn === 'docEntry' && (sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />)}
+                        {sortColumn !== 'docEntry' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
+                      </div>
+                    </th>
+                    <th className="p-3 font-semibold w-32 cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('cardCode')}>
+                      <div className="flex items-center gap-1">
+                        RUT / SN
+                        {sortColumn === 'cardCode' && (sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />)}
+                        {sortColumn !== 'cardCode' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
+                      </div>
+                    </th>
+                    <th className="p-3 font-semibold w-28 cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('docDate')}>
+                      <div className="flex items-center gap-1">
+                        F. Documento
+                        {sortColumn === 'docDate' && (sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />)}
+                        {sortColumn !== 'docDate' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
+                      </div>
+                    </th>
+                    <th className="p-3 font-semibold w-24 text-center cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('sheetStatus')}>
+                      <div className="flex items-center justify-center gap-1">
+                        Estado
+                        {sortColumn === 'sheetStatus' && (sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />)}
+                        {sortColumn !== 'sheetStatus' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
+                      </div>
+                    </th>
+                    <th className="p-3 font-semibold max-w-[120px] cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('costCenter')}>
+                      <div className="flex items-center gap-1">
+                        C. Costo (Ej)
+                        {sortColumn === 'costCenter' && (sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />)}
+                        {sortColumn !== 'costCenter' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
+                      </div>
+                    </th>
+                    <th className="p-3 font-semibold text-right w-28 cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('totalNet')}>
+                      <div className="flex items-center justify-end gap-1">
+                        Total (Neto)
+                        {sortColumn === 'totalNet' && (sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />)}
+                        {sortColumn !== 'totalNet' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
+                      </div>
+                    </th>
+                    <th className="p-3 font-semibold text-center w-12 text-slate-400"><MoreVertical className="w-4 h-4 mx-auto" /></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredOrders.map(o => {
+                  {sortedOrders.map(o => {
                     const isChecked = batchSelectedOrders.includes(o.docEntry);
+                    const isClosed = o.documentStatus === 'bost_Close' || o.documentStatus === 'bost_Cancel' || o.isCancelled;
                     return (
                     <tr 
                       key={o.docEntry} 
-                      className={`cursor-pointer transition-colors ${selectedOrderEntry === o.docEntry ? 'bg-blue-50/50' : 'hover:bg-slate-50/80'} ${isChecked ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'} ${o.sheetStatus === 'anomaly' ? 'bg-red-50 hover:bg-red-100 opacity-60 border-l-red-500' : ''}`}
+                      className={`cursor-pointer transition-colors ${selectedOrderEntry === o.docEntry ? 'bg-blue-50/50' : 'hover:bg-slate-50/80'} ${isChecked ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'} ${o.sheetStatus === 'anomaly' ? 'bg-red-50 hover:bg-red-100 opacity-60 border-l-red-500' : ''} ${isClosed ? 'opacity-50 grayscale bg-slate-100 hover:bg-slate-200' : ''}`}
                       onClick={() => o.sheetStatus === 'anomaly' ? null : selectOrder(o.docEntry === selectedOrderEntry ? null : o.docEntry)}
                     >
                       <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
@@ -415,7 +531,7 @@ export default function App() {
                           className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:bg-slate-200 cursor-pointer"
                           checked={isChecked}
                           onChange={() => toggleBatchSelection(o.docEntry)}
-                          disabled={isProcessingBatch || o.sheetStatus === 'anomaly'}
+                          disabled={isProcessingBatch || o.sheetStatus === 'anomaly' || isClosed}
                         />
                       </td>
                       <td className={`p-3 font-bold ${selectedOrderEntry === o.docEntry ? 'text-blue-700' : 'text-slate-700'}`}>
@@ -425,16 +541,48 @@ export default function App() {
                       <td className="p-3 font-mono text-slate-400 text-[10px]">{o.docEntry}</td>
                       <td className="p-3 text-[11px] truncate whitespace-nowrap">{o.cardCode} <span className="font-medium text-slate-500"></span></td>
                       <td className="p-3 text-[11px] whitespace-nowrap">{formatDate(o.docDate)}</td>
-                      <td className="p-3 text-center">{formatSheetStatus(o.sheetStatus)}</td>
+                      <td className="p-3 text-center">
+                         {isClosed ? <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded border border-slate-300">Cerrado en SAP</span> : formatSheetStatus(o.sheetStatus)}
+                      </td>
                       <td className="p-3 text-[11px] text-slate-500 truncate max-w-[120px]">{o.documentLines[0]?.costCenter || "-"}</td>
                       <td className="p-3 text-right font-mono font-semibold">{o.currency === 'CLP' ? formatCurrency(o.totalNet) : `${o.totalNet} UF`}</td>
-                      <td className="p-3 text-center">
-                        <button 
-                          className="text-red-500 hover:text-red-700 font-medium hover:underline text-[11px] px-2 py-1 rounded hover:bg-red-50 transition-colors"
-                          onClick={(e) => { e.stopPropagation(); cancelOrder(o.docEntry); }}
-                        >
-                          Cancelar
-                        </button>
+                      <td className="p-3 text-center relative" onClick={(e) => e.stopPropagation()}>
+                        {!isClosed && (
+                          <>
+                            <button 
+                              className="text-slate-400 hover:text-slate-700 transition-colors p-1 rounded hover:bg-slate-100"
+                              onClick={() => setActiveMenu(activeMenu === o.docEntry ? null : o.docEntry)}
+                              disabled={isProcessingBatch}
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </button>
+                            <AnimatePresence>
+                              {activeMenu === o.docEntry && (
+                                <motion.div 
+                                  initial={{ opacity: 0, scale: 0.95, y: -5 }} 
+                                  animate={{ opacity: 1, scale: 1, y: 0 }} 
+                                  exit={{ opacity: 0, scale: 0.95, y: -5 }}
+                                  transition={{ duration: 0.15 }}
+                                  className="absolute right-8 top-2 bg-white shadow-xl border border-slate-200 rounded-md py-1 z-50 w-36 flex flex-col items-stretch overflow-hidden origin-top-right text-left"
+                                >
+                                  <button 
+                                    className="px-4 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 text-left transition-colors"
+                                    onClick={() => { setActiveMenu(null); useStore.getState().invoiceFullOrder(o.docEntry); }}
+                                  >
+                                    Facturar Orden
+                                  </button>
+                                  <div className="h-px bg-slate-100 my-1 cursor-default"></div>
+                                  <button 
+                                    className="px-4 py-2 text-[11px] font-semibold text-red-600 hover:bg-red-50 text-left transition-colors"
+                                    onClick={() => { setActiveMenu(null); useStore.getState().closeOrder(o.docEntry); }}
+                                  >
+                                    Cerrar Orden
+                                  </button>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </>
+                        )}
                       </td>
                     </tr>
                   )})}

@@ -60,6 +60,8 @@ export interface SalesOrder {
   // Derived or summary data for grid
   totalNet: number;
   isCancelled: boolean;
+  documentStatus: string; // e.g. "bost_Open", "bost_Close", "bost_Cancel"
+  comments?: string; // SBO order comments
   
   // Sheet Integration Fields
   sheetStatus?: SheetStatus;

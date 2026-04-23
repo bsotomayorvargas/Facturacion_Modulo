@@ -61,13 +61,15 @@ interface AppState {
   toggleBatchSelection: (docEntry: number) => void;
   toggleAllBatchSelection: (selectAll: boolean) => void;
   closeBatchOrders: () => Promise<void>;
+  invoiceBatchOrders: () => Promise<void>;
   
   selectOrder: (docEntry: number | null) => void;
   fetchOrders: () => Promise<void>;
   toggleSubline: (lineNum: number) => void;
   toggleAllSublines: (selectAll: boolean) => void;
   
-  cancelOrder: (docEntry: number) => Promise<void>;
+  closeOrder: (docEntry: number) => Promise<void>;
+  invoiceFullOrder: (docEntry: number) => Promise<void>;
   generateInvoice: () => Promise<void>;
 
   // Computed Simulators (exposed as getters/functions or just derived in React component for better state management, 
@@ -202,7 +204,7 @@ export const useStore = create<AppState>((set, get) => ({
     const dateFrom = filters.dateFrom;
     const dateTo = filters.dateTo;
     
-    const initialOdataQuery = `Orders()?$select=DocEntry,DocNum,DocType,DocDate,DocDueDate,TaxDate,CardCode,DocTotal,DocCurrency,DocRate,Reference1,Comments,JournalMemo,BPLName,Cancelled,DocumentLines&$filter=DocDate ge '${dateFrom}' and DocDate le '${dateTo}'`;
+    const initialOdataQuery = `Orders()?$select=DocEntry,DocNum,DocType,DocDate,DocDueDate,TaxDate,CardCode,DocTotal,DocCurrency,DocRate,Reference1,Comments,JournalMemo,BPLName,Cancelled,DocumentStatus,DocumentLines&$filter=DocDate ge '${dateFrom}' and DocDate le '${dateTo}'`;
     console.log(`[Service Layer Request]: Initializing Extraction: ${initialOdataQuery}`);
     
     // Reset selection before extraction
@@ -271,6 +273,8 @@ export const useStore = create<AppState>((set, get) => ({
         currency: sapOrder.DocCurrency,
         totalNet: sapOrder.DocTotal,
         isCancelled: sapOrder.Cancelled === "tYES",
+        documentStatus: sapOrder.DocumentStatus,
+        comments: sapOrder.Comments,
         // Force match by name, if it fails, fallback to UI BplId "1"
         bplid: bplDict[sapOrder.BPLName] || "1", 
         documentLines: sapOrder.DocumentLines.map((line: any) => ({
@@ -303,24 +307,37 @@ export const useStore = create<AppState>((set, get) => ({
   syncSheetsData: (parsedData: any[]) => set((state) => {
     const anomalies: SheetAnomaly[] = [];
     
+    // Helper para normalizar strings: quitar espacios, tildes y pasar a minusculas
+    const normalizeKey = (str: string) => 
+      String(str).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "");
+
     const updatedOrders = state.orders.map(ov => {
       const docNumStr = String(ov.docNum);
       
       const matchRow = parsedData.find(row => {
-        // Find by exact Doc Venta header or column B (index 1)
-        const docVenta = String(
-          row['Doc venta'] || row['Doc Venta'] || row['doc venta'] || row[1] || "" // Also look at index 1 for Col B fallback
-        ).trim().replace(/\s/g, '').toUpperCase();
+        // Encontrar clave (Doc Venta) robustamente
+        const keys = Object.keys(row);
+        const docVentaKey = keys.find(k => normalizeKey(k).includes('docventa')) || keys[1]; // fallback index 1
         
+        if (!docVentaKey) return false;
+
+        const docVenta = String(row[docVentaKey] || "").trim().replace(/\s/g, '').toUpperCase();
         return docVenta.includes(docNumStr) || docVenta.includes(`OV${docNumStr}`);
       });
 
       if (!matchRow) return { ...ov, sheetStatus: 'pending' as const };
 
-      // DF = index 109, GK = index 192 (0-indexed parsing in arrays without header)
-      const docVenta = String(matchRow['Doc venta'] || matchRow['Doc Venta'] || matchRow[1] || "");
-      const fechaGanado = matchRow['Fecha de ganado'] || matchRow['Fecha Ganado'] || matchRow[109] || null;
-      const fechaTE4 = matchRow['Fecha TE4 Inscrito'] || matchRow['Fecha TE4'] || matchRow[192] || null;
+      // Búsqueda de llaves robusta
+      const rowKeys = Object.keys(matchRow);
+      const cecoKey = rowKeys.find(k => normalizeKey(k).includes('ceco')) || rowKeys[0];
+      const docVentaKey = rowKeys.find(k => normalizeKey(k).includes('docventa')) || rowKeys[1];
+      const ganadoKey = rowKeys.find(k => normalizeKey(k).includes('ganado')) || rowKeys[2];
+      const te4Key = rowKeys.find(k => normalizeKey(k).includes('te4')) || rowKeys[3];
+
+      const docVenta = String(matchRow[docVentaKey] || "");
+      const ceco = matchRow[cecoKey] ? String(matchRow[cecoKey]) : null;
+      const fechaGanado = matchRow[ganadoKey] || null;
+      const fechaTE4 = matchRow[te4Key] || null;
       
       const is21007 = docVenta.includes('21007');
 
@@ -329,19 +346,20 @@ export const useStore = create<AppState>((set, get) => ({
       const hasGanadoVal = fechaGanado && String(fechaGanado).trim() !== "";
       const hasTE4Val = fechaTE4 && String(fechaTE4).trim() !== "";
 
+      // Árbol de decisión de Cuadratura EPM
       if (hasTE4Val && !hasGanadoVal) {
         status = 'anomaly';
         anomalies.push({
           docNum: ov.docNum,
           docEntry: ov.docEntry,
-          reason: "Presenta fecha TE4 Inscrito, pero carece de Fecha de Ganado.",
+          reason: "Incongruencia: Presenta fecha TE4 Inscrito, pero carece de Fecha de Ganado.",
           sheetRef: docVenta
         });
       } else if (is21007 && hasGanadoVal) {
         status = 'ready_100';
-      } else if (hasGanadoVal && hasTE4Val) {
+      } else if (!is21007 && hasGanadoVal && hasTE4Val) {
         status = 'ready_cierre';
-      } else if (hasGanadoVal && !hasTE4Val) {
+      } else if (!is21007 && hasGanadoVal && !hasTE4Val) {
         status = 'ready_anticipo';
       }
 
@@ -381,8 +399,11 @@ export const useStore = create<AppState>((set, get) => ({
   toggleAllBatchSelection: (selectAll) => set((state) => {
     if (!selectAll) return { batchSelectedOrders: [] };
     // Select all currently visible in filtered list, MINUS ANOMALIES to maintain security
+    // ALSO MINUS CLOSED or CANCELLED to prevent operating on already-closed orders
     const visibleOrders = state.orders.filter(o => 
-      !o.isCancelled &&
+      o.documentStatus !== 'bost_Close' && 
+      o.documentStatus !== 'bost_Cancel' &&
+      !o.isCancelled && // double lock 
       o.bplid === state.filters.bplid &&
       o.sheetStatus !== 'anomaly' &&
       (state.filters.rut ? o.cardCode.includes(state.filters.rut) : true) &&
@@ -407,7 +428,6 @@ export const useStore = create<AppState>((set, get) => ({
     let successCount = 0;
     const errors: { docNum: number, error: string }[] = [];
 
-    // Iterator Queue Pattern for SAP SBO safety (Prevents API overloading)
     for (let i = 0; i < batchSelectedOrders.length; i++) {
        const docEntry = batchSelectedOrders[i];
        const orderInfo = state.orders.find(o => o.docEntry === docEntry);
@@ -416,6 +436,23 @@ export const useStore = create<AppState>((set, get) => ({
        set({ batchProgress: { current: i + 1, total: batchSelectedOrders.length } });
 
        try {
+         // Step 1: Try Patch Comments
+         const existingComments = orderInfo?.comments || "";
+         let newComments = existingComments ? `${existingComments} - Cerrada por Sistema APP` : "Cerrada por Sistema APP";
+         if (newComments.length > 254) newComments = newComments.substring(0, 254);
+         
+         await fetch('/api/sap/proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              method: 'PATCH',
+              url: `${session.url}/Orders(${docEntry})`,
+              token: session.token,
+              body: { Comments: newComments }
+            })
+         }); // Ignore failure on patch for batch close
+
+         // Step 2: Close
          const response = await fetch('/api/sap/proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -437,24 +474,115 @@ export const useStore = create<AppState>((set, get) => ({
          errors.push({ docNum, error: error.message });
        }
        
-       // Throttle slightly to breathe between requests to B1
        await new Promise(resolve => setTimeout(resolve, 200));
     }
 
     set({ 
       isProcessingBatch: false, 
       batchProgress: null, 
-      batchSelectedOrders: errors.length > 0 ? get().batchSelectedOrders : [] // Keep failed ones selected? Emptying for now.
+      batchSelectedOrders: errors.length > 0 ? get().batchSelectedOrders : []
     });
 
     if (errors.length > 0) {
       const errorMsg = errors.map(e => `OV ${e.docNum}: ${e.error}`).join('\n');
       alert(`Finalizado. Éxitos: ${successCount}. Hubo ${errors.length} errores:\n\n${errorMsg}`);
     } else {
-      alert(`¡Cierre automático completado! Órdenes finalizadas: ${successCount}.`);
+      alert(`¡Cierre masivo completado! Órdenes cerradas: ${successCount}.`);
     }
 
-    // Auto-refresh layout to sweep out the closed transactions visually
+    await get().fetchOrders();
+  },
+
+  invoiceBatchOrders: async () => {
+    const state = get();
+    const { session, batchSelectedOrders } = state;
+    if (batchSelectedOrders.length === 0) return;
+    if (!session.url || !session.token) {
+      alert("No hay sesión activa para facturar masivamente.");
+      return;
+    }
+
+    set({ isProcessingBatch: true, batchProgress: { current: 0, total: batchSelectedOrders.length } });
+
+    let successCount = 0;
+    const errors: { docNum: number, error: string }[] = [];
+    const today = new Date().toISOString().split('T')[0];
+    const user = session.user || "UnknownUser";
+    const comments = `Facturado masivamente desde Portal por ${user} el ${today}`;
+
+    for (let i = 0; i < batchSelectedOrders.length; i++) {
+       const docEntry = batchSelectedOrders[i];
+       const order = state.orders.find(o => o.docEntry === docEntry);
+       const docNum = order?.docNum || docEntry;
+       
+       set({ batchProgress: { current: i + 1, total: batchSelectedOrders.length } });
+
+       try {
+         if (!order) throw new Error("Datos de orden no encontrados en UI");
+
+         const payload: ODataV2InvoicePayload = {
+           BPL_IDAssignedToInvoice: parseInt(order.bplid, 10),
+           DocType: "dDocument_Items",
+           HandWritten: "tNO",
+           DocDate: today,
+           DocDueDate: today,
+           TaxDate: today,
+           DocCurrency: order.currency,
+           CardCode: order.cardCode,
+           Comments: comments,
+           Indicator: "33",
+           U_Orden_Venta: String(order.docNum),
+           DocumentLines: order.documentLines.map(l => ({
+               BaseType: 17,
+               BaseEntry: order.docEntry,
+               BaseLine: l.lineNum,
+               ItemCode: l.itemCode,
+               Quantity: l.quantity,
+               ProjectCode: l.project,
+               TaxCode: "IVA",
+               CostingCode5: l.costCenter,
+               U_Orden_Venta: String(order.docNum)
+             }))
+         };
+
+         const response = await fetch('/api/sap/proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              method: 'POST',
+              url: `${session.url}/Invoices`,
+              body: payload,
+              token: session.token
+            })
+         });
+
+         if (!response.ok) {
+           let errValue = `Error SBO Al facturar`;
+           try { const err = await response.json(); errValue = err?.error?.message?.value || JSON.stringify(err); } catch(e) { }
+           throw new Error(errValue);
+         }
+         successCount++;
+       } catch (error: any) {
+         console.error(`Error invoicing OV ${docNum}:`, error);
+         errors.push({ docNum, error: error.message });
+       }
+       
+       await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    set({ 
+      isProcessingBatch: false, 
+      batchProgress: null, 
+      batchSelectedOrders: errors.length > 0 ? get().batchSelectedOrders : []
+    });
+
+    if (errors.length > 0) {
+      const errorMsg = errors.map(e => `OV ${e.docNum}: ${e.error}`).join('\n');
+      alert(`Finalizado. Éxitos: ${successCount}. Hubo ${errors.length} errores:\n\n${errorMsg}`);
+    } else {
+      alert(`¡Facturación masiva completada! Facturas generadas: ${successCount}.`);
+    }
+
     await get().fetchOrders();
   },
 
@@ -474,35 +602,140 @@ export const useStore = create<AppState>((set, get) => ({
     return { selectedSublines: order.documentLines.map(l => l.lineNum) };
   }),
 
-  cancelOrder: async (docEntry) => {
+  closeOrder: async (docEntry) => {
     try {
       const { session } = get();
       if (!session.url || !session.token) throw new Error("No hay sesión activa");
       
+      const orderToClose = get().orders.find(o => o.docEntry === docEntry);
+      const docNumLabel = orderToClose ? orderToClose.docNum : docEntry;
+      
+      // Compute new comments value
+      const existingComments = orderToClose?.comments || "";
+      let newComments = existingComments ? `${existingComments} - Cerrada por Sistema APP` : "Cerrada por Sistema APP";
+      if (newComments.length > 254) {
+        newComments = newComments.substring(0, 254);
+      }
+
+      // Step 1: Update comments via PATCH (Best Effort)
+      let commentsUpdated = true;
+      const patchResponse = await fetch('/api/sap/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          method: 'PATCH',
+          url: `${session.url}/Orders(${docEntry})`,
+          token: session.token,
+          body: { Comments: newComments }
+        })
+      });
+
+      if (!patchResponse.ok) {
+        commentsUpdated = false;
+        let errValue = "";
+        try { const err = await patchResponse.json(); errValue = err?.error?.message?.value || JSON.stringify(err); } catch(e) { }
+        console.warn(`[SAP API] No se pudo actualizar el comentario previo a cierre. Error: ${errValue}. Procediendo con el cierre directamente...`);
+      }
+
+      // Step 2: Close Order via POST to /Close
       const response = await fetch('/api/sap/proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'POST',
-          url: `${session.url}/Orders(${docEntry})/Cancel`,
+          url: `${session.url}/Orders(${docEntry})/Close`,
           token: session.token
         })
       });
 
       if (!response.ok) {
-        let errValue = "Error cancelando orden";
+        let errValue = "Error cerrando orden";
+        try { const err = await response.json(); errValue = err?.error?.message?.value || JSON.stringify(err); } catch(e) { }
+        throw new Error(`Fallo cerrando: ${errValue}`);
+      }
+
+      set((state) => ({
+        orders: state.orders.map(o => o.docEntry === docEntry ? { ...o, documentStatus: 'bost_Close', comments: commentsUpdated ? newComments : o.comments } : o),
+        selectedOrderEntry: state.selectedOrderEntry === docEntry ? null : state.selectedOrderEntry,
+        selectedSublines: state.selectedOrderEntry === docEntry ? [] : state.selectedSublines
+      }));
+
+      // Feedback for user
+      if (commentsUpdated) {
+        alert(`✅ ¡Éxito Confirmado por SAP API! La Orden de Venta N° ${docNumLabel} fue cerrada. Se registró el comentario.`);
+      } else {
+        alert(`✅ ¡Éxito! La Orden de Venta N° ${docNumLabel} fue cerrada. (Nota: No se pudo actualizar el comentario debido a validaciones internas de SAP, por ejemplo, códigos de proyecto inactivos).`);
+      }
+    } catch (error: any) {
+      console.error(error);
+      alert(`Error cerrando orden: ${error.message}`);
+    }
+  },
+
+  invoiceFullOrder: async (docEntry) => {
+    try {
+      const state = get();
+      const { session } = state;
+      if (!session.url || !session.token) throw new Error("No hay sesión para facturar");
+
+      const order = state.orders.find(o => o.docEntry === docEntry);
+      if (!order) return;
+
+      const today = new Date().toISOString().split('T')[0];
+      const user = session.user || "UnknownUser";
+      const comments = `Facturado desde Portal por ${user} el ${today}`;
+
+      const payload: ODataV2InvoicePayload = {
+        BPL_IDAssignedToInvoice: parseInt(order.bplid, 10),
+        DocType: "dDocument_Items",
+        HandWritten: "tNO",
+        DocDate: today,
+        DocDueDate: today,
+        TaxDate: today,
+        DocCurrency: order.currency,
+        CardCode: order.cardCode,
+        Comments: comments,
+        Indicator: "33",
+        U_Orden_Venta: String(order.docNum),
+        DocumentLines: order.documentLines.map(l => ({
+            BaseType: 17,
+            BaseEntry: order.docEntry,
+            BaseLine: l.lineNum,
+            ItemCode: l.itemCode,
+            Quantity: l.quantity,
+            ProjectCode: l.project,
+            TaxCode: "IVA",
+            CostingCode5: l.costCenter,
+            U_Orden_Venta: String(order.docNum)
+          }))
+      };
+
+      const response = await fetch('/api/sap/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          method: 'POST',
+          url: `${session.url}/Invoices`,
+          body: payload,
+          token: session.token
+        })
+      });
+
+      if (!response.ok) {
+        let errValue = "Error al generar factura";
         try { const err = await response.json(); errValue = err?.error?.message?.value || JSON.stringify(err); } catch(e) { }
         throw new Error(errValue);
       }
 
       set((state) => ({
-        orders: state.orders.map(o => o.docEntry === docEntry ? { ...o, isCancelled: true } : o),
+        orders: state.orders.map(o => o.docEntry === docEntry ? { ...o, documentStatus: 'bost_Close' } : o),
         selectedOrderEntry: state.selectedOrderEntry === docEntry ? null : state.selectedOrderEntry,
         selectedSublines: state.selectedOrderEntry === docEntry ? [] : state.selectedSublines
       }));
-    } catch (error: any) {
+      alert(`✅ ¡Factura generada con éxito para la Orden N° ${order.docNum}!`);
+    } catch(error: any) {
       console.error(error);
-      alert(`Error cancelando orden: ${error.message}`);
+      alert(`Fallo en factura/API: ${error.message}`);
     }
   },
 
