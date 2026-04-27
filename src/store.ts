@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { SalesOrder, Session, Filters, MasterData, ODataV2InvoicePayload, SheetAnomaly, SheetStatus } from './types';
+import { formatDate, parseDateToSAP } from './lib/utils';
+import { SalesOrder, Session, Filters, MasterData, ODataV2InvoicePayload, SheetAnomaly, SheetStatus, Subline } from './types';
 
 // The requested raw JSON payload for /BusinessPlaces
 const RAW_BPL_RESPONSE = {
@@ -62,8 +63,10 @@ interface AppState {
   toggleAllBatchSelection: (selectAll: boolean) => void;
   closeBatchOrders: () => Promise<void>;
   invoiceBatchOrders: () => Promise<void>;
+  regularizeProjects: (targetOrders?: SalesOrder[]) => Promise<void>;
   
   selectOrder: (docEntry: number | null) => void;
+  updateSalesOrder: (docEntry: number, updates: { comments?: string, reference?: string, project?: string, newLines?: Partial<Subline>[], updatedLines?: Partial<Subline>[] }) => Promise<void>;
   fetchOrders: () => Promise<void>;
   toggleSubline: (lineNum: number) => void;
   toggleAllSublines: (selectAll: boolean) => void;
@@ -180,8 +183,9 @@ export const useStore = create<AppState>((set, get) => ({
     rut: "",
     project: "",
     cc: "",
-    dateFrom: "2026-04-01",
-    dateTo: "2026-04-30"
+    dateFrom: formatDate(new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0]),
+    dateTo: formatDate(new Date().toISOString().split('T')[0]),
+    searchQuery: ""
   },
 
   setFilters: (newFilters) => set((state) => {
@@ -201,11 +205,39 @@ export const useStore = create<AppState>((set, get) => ({
   // Function to load the orders from the Service Layer with Pagination Support
   fetchOrders: async () => {
     const { session, filters, masterData } = get();
-    const dateFrom = filters.dateFrom;
-    const dateTo = filters.dateTo;
+    const { dateFrom, dateTo, rut, searchQuery, bplid, project, cc } = filters;
     
-    const initialOdataQuery = `Orders()?$select=DocEntry,DocNum,DocType,DocDate,DocDueDate,TaxDate,CardCode,DocTotal,DocCurrency,DocRate,Reference1,Comments,JournalMemo,BPLName,Cancelled,DocumentStatus,DocumentLines&$filter=DocDate ge '${dateFrom}' and DocDate le '${dateTo}'`;
-    console.log(`[Service Layer Request]: Initializing Extraction: ${initialOdataQuery}`);
+    // Parse dates to SAP format YYYY-MM-DD
+    const sapDateFrom = parseDateToSAP(dateFrom);
+    const sapDateTo = parseDateToSAP(dateTo);
+    
+    let filterClauses = [`DocDate ge '${sapDateFrom}' and DocDate le '${sapDateTo}'` || ""];
+    
+    if (rut) {
+      filterClauses.push(`contains(CardCode, '${rut}')`);
+    }
+    
+    if (project) {
+      filterClauses.push(`Project eq '${project}'`);
+    }
+
+    if (cc) {
+      // CC usually only at line level, if we can't search line any, we might have to remove this or use header cc if available.
+      // Assuming user only wants project in header for now.
+    }
+
+    if (searchQuery) {
+      if (!isNaN(Number(searchQuery))) {
+        filterClauses.push(`DocNum eq ${searchQuery}`);
+      } else {
+        filterClauses.push(`(contains(Reference1, '${searchQuery}') or contains(Project, '${searchQuery}'))`);
+      }
+    }
+
+    const filter = filterClauses.filter(Boolean).join(' and ');
+    
+    const initialOdataQuery = `Orders()?$select=DocEntry,DocNum,DocType,DocDate,DocDueDate,TaxDate,CardCode,DocTotal,DocCurrency,DocRate,Reference1,Comments,Project,JournalMemo,BPLName,Cancelled,DocumentStatus,DocumentLines&$filter=${filter}`;
+    console.log(`[Service Layer Request]: Querying SAP with filter: ${filter}`);
     
     // Reset selection before extraction
     set({ selectedOrderEntry: null, selectedSublines: [] });
@@ -267,14 +299,17 @@ export const useStore = create<AppState>((set, get) => ({
         docEntry: sapOrder.DocEntry,
         docNum: sapOrder.DocNum,
         cardCode: sapOrder.CardCode,
-        cardName: sapOrder.CardCode, 
+        cardName: sapOrder.CardName || sapOrder.CardCode, 
         docDate: sapOrder.DocDate,
         docDueDate: sapOrder.DocDueDate,
         currency: sapOrder.DocCurrency,
+        docRate: sapOrder.DocRate,
         totalNet: sapOrder.DocTotal,
         isCancelled: sapOrder.Cancelled === "tYES",
         documentStatus: sapOrder.DocumentStatus,
         comments: sapOrder.Comments,
+        reference: sapOrder.Reference1,
+        project: sapOrder.Project,
         // Force match by name, if it fails, fallback to UI BplId "1"
         bplid: bplDict[sapOrder.BPLName] || "1", 
         documentLines: sapOrder.DocumentLines.map((line: any) => ({
@@ -288,11 +323,31 @@ export const useStore = create<AppState>((set, get) => ({
           project: line.ProjectCode || "",
           costCenter: line.CostingCode5 || "",
           currency: line.Currency,
+          rate: line.Rate,
           lineStatus: line.LineStatus
         }))
       }));
 
-      set({ orders: mappedOrders });
+      // Deduplicate by docEntry in case API pagination returns duplicate objects
+      const oldOrders = get().orders;
+      
+      const uniqueOrders = mappedOrders.filter((order, index, self) =>
+        index === self.findIndex((o) => o.docEntry === order.docEntry)
+      ).map(order => {
+        const oldOrder = oldOrders.find(o => o.docEntry === order.docEntry);
+        if (oldOrder) {
+          return {
+            ...order,
+            sheetStatus: oldOrder.sheetStatus,
+            sheetRef: oldOrder.sheetRef,
+            fechaGanado: oldOrder.fechaGanado,
+            fechaTE4: oldOrder.fechaTE4,
+          };
+        }
+        return order;
+      });
+
+      set({ orders: uniqueOrders });
     } catch(error: any) {
       console.error(error);
       alert(`Error extrayendo transacciones: ${error.message}`);
@@ -363,6 +418,23 @@ export const useStore = create<AppState>((set, get) => ({
         status = 'ready_anticipo';
       }
 
+      if (status === 'ready_anticipo') {
+        const line0 = ov.documentLines.find(l => l.lineNum === 0);
+        if (line0 && line0.lineStatus === 'bost_Close') {
+          status = 'pending_te4';
+        }
+      } else if (status === 'ready_cierre') {
+        const line1 = ov.documentLines.find(l => l.lineNum === 1);
+        if (line1 && line1.lineStatus === 'bost_Close') {
+          status = 'pending';
+        }
+      } else if (status === 'ready_100') {
+         const line0 = ov.documentLines.find(l => l.lineNum === 0);
+         if (line0 && line0.lineStatus === 'bost_Close') {
+           status = 'pending';
+         }
+      }
+
       return {
         ...ov,
         sheetStatus: status,
@@ -381,6 +453,92 @@ export const useStore = create<AppState>((set, get) => ({
   }),
 
   selectOrder: (docEntry) => set({ selectedOrderEntry: docEntry, selectedSublines: [] }),
+  
+  // Order operations
+  updateSalesOrder: async (docEntry, updates) => {
+    const { session } = get();
+    if (!session.url || !session.token) {
+      alert("No hay sesión activa para actualizar OV.");
+      return;
+    }
+    
+    const order = get().orders.find(o => o.docEntry === docEntry);
+
+    // Construct payload
+    const payload: any = {};
+    if (updates.comments !== undefined) {
+      payload.Comments = updates.comments;
+    }
+    if (updates.reference !== undefined) {
+      payload.Reference1 = updates.reference;
+    }
+    if (updates.project !== undefined) {
+      payload.Project = updates.project;
+    }
+    
+    if (updates.updatedLines || updates.newLines) {
+      const docLines: any[] = [];
+      let docCurrency = undefined;
+
+      if (updates.updatedLines) {
+        updates.updatedLines.forEach(l => {
+          if (l.currency && l.currency !== 'CLP') docCurrency = l.currency;
+          docLines.push({
+            LineNum: l.lineNum,
+            Quantity: l.quantity,
+            Price: l.price,
+            UnitPrice: l.price,
+            Currency: l.currency
+          });
+        });
+      }
+      if (updates.newLines) {
+        updates.newLines.forEach(l => {
+          if (l.currency && l.currency !== 'CLP') docCurrency = l.currency;
+          docLines.push({
+            ItemCode: l.itemCode,
+            Quantity: l.quantity,
+            Price: l.price,
+            UnitPrice: l.price,
+            Currency: l.currency,
+            ProjectCode: l.project,
+            CostingCode5: l.costCenter,
+            TaxCode: "IVA",
+            U_Orden_Venta: String(order?.docNum || "")
+          });
+        });
+      }
+      if (docLines.length > 0) {
+        payload.DocumentLines = docLines;
+      }
+      if (docCurrency) {
+        payload.DocCurrency = docCurrency;
+      }
+    }
+    
+    console.log("updateSalesOrder payload:", payload);
+
+    const response = await fetch('/api/sap/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          method: 'PATCH',
+          url: `${session.url}/Orders(${docEntry})`,
+          body: payload,
+          token: session.token
+        })
+    });
+    
+    if (!response.ok) {
+       let errorDetails = "";
+       try { const err = await response.json(); errorDetails = err?.error?.message?.value || JSON.stringify(err); } catch(e) {}
+       alert("Error actualizando OV: " + errorDetails);
+       return;
+    }
+    
+    // Refresh orders after successful update
+    await get().fetchOrders();
+  },
   
   // Batch Implementation
   batchSelectedOrders: [],
@@ -532,7 +690,14 @@ export const useStore = create<AppState>((set, get) => ({
            Comments: comments,
            Indicator: "33",
            U_Orden_Venta: String(order.docNum),
-           DocumentLines: order.documentLines.map(l => ({
+           DocumentLines: order.documentLines
+             .filter(l => {
+                if (order.sheetStatus === 'ready_anticipo') return l.lineNum === 0;
+                if (order.sheetStatus === 'ready_cierre') return l.lineNum === 1;
+                if (order.sheetStatus === 'ready_100') return l.lineNum === 0;
+                return l.lineStatus === 'bost_Open'; // default safe open lines
+             })
+             .map(l => ({
                BaseType: 17,
                BaseEntry: order.docEntry,
                BaseLine: l.lineNum,
@@ -583,6 +748,98 @@ export const useStore = create<AppState>((set, get) => ({
       alert(`¡Facturación masiva completada! Facturas generadas: ${successCount}.`);
     }
 
+    await get().fetchOrders();
+  },
+
+  regularizeProjects: async (targetOrders?: SalesOrder[]) => {
+    const state = get();
+    const { session, orders } = state;
+    
+    // Si no se pasan órdenes, usamos todas las del store
+    const sourceOrders = targetOrders || orders;
+    
+    if (!session.url || !session.token) {
+      alert("No hay sesión activa para regularizar.");
+      return;
+    }
+
+    // Identificar órdenes que necesitan regularización
+    const ordersToUpdate = sourceOrders.filter(o => {
+      const hasHeaderProject = o.project && String(o.project).trim() !== "";
+      if (hasHeaderProject) return false;
+
+      // Solo órdenes que NO estén cerradas ni canceladas
+      const status = String(o.documentStatus || "").toLowerCase();
+      if (status.includes('close') || status.includes('cancel') || o.isCancelled) return false;
+      
+      // Debe tener al menos una línea con proyecto para poder copiarlo
+      const lineWithProject = o.documentLines.find(l => l.project && String(l.project).trim() !== "");
+      return !!lineWithProject;
+    });
+
+    if (ordersToUpdate.length === 0) {
+      alert('🔍 No se encontraron órdenes pendientes de regularización en el listado actual.\n\nEsto significa que las OVs visibles ya tienen Proyecto en cabecera o no tienen información de proyecto en sus líneas.');
+      return;
+    }
+
+    const message = `Se han detectado ${ordersToUpdate.length} órdenes que tienen Proyecto en sus líneas pero NO en el encabezado.\n\nEl sistema copiará el Código de Proyecto de la primera línea al encabezado de cada OV.\n\n¿Desea corregir estas ${ordersToUpdate.length} órdenes ahora?`;
+    
+    if (!confirm(message)) {
+      return;
+    }
+
+    set({ isProcessingBatch: true, batchProgress: { current: 0, total: ordersToUpdate.length } });
+
+    let successCount = 0;
+    const errors: { docNum: number, error: string }[] = [];
+
+    for (let i = 0; i < ordersToUpdate.length; i++) {
+      const order = ordersToUpdate[i];
+      set({ batchProgress: { current: i + 1, total: ordersToUpdate.length } });
+
+      try {
+        const firstLineWithProject = order.documentLines.find(l => l.project && String(l.project).trim() !== "");
+        if (!firstLineWithProject) continue;
+
+        const response = await fetch('/api/sap/proxy', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({
+             method: 'PATCH',
+             url: `${session.url}/Orders(${order.docEntry})`,
+             body: { Project: firstLineWithProject.project },
+             token: session.token
+           })
+        });
+
+        if (!response.ok) {
+           let errValue = `Error SAP`;
+           try { 
+             const err = await response.json(); 
+             errValue = err?.error?.message?.value || JSON.stringify(err); 
+           } catch(e) { }
+           throw new Error(errValue);
+        }
+        successCount++;
+      } catch (error: any) {
+        console.error(`Error regularizing OV ${order.docNum}:`, error);
+        errors.push({ docNum: order.docNum, error: error.message });
+      }
+      
+      // Delay preventivo
+      await new Promise(resolve => setTimeout(resolve, 150));
+    }
+
+    set({ isProcessingBatch: false, batchProgress: null });
+
+    if (errors.length > 0) {
+      const errorMsg = errors.map(e => `OV ${e.docNum}: ${e.error}`).join('\n');
+      alert(`⚠️ Proceso finalizado con observaciones.\n\nÉxitos: ${successCount}\nErrores: ${errors.length}\n\nDetalle de errores:\n${errorMsg}`);
+    } else {
+      alert(`✅ ¡Regularización exitosa!\n\nSe han actualizado ${successCount} órdenes. Ahora el campo Proyecto aparecerá correctamente en los listados y búsquedas.`);
+    }
+
+    // Refrescar para ver los cambios
     await get().fetchOrders();
   },
 
@@ -697,7 +954,7 @@ export const useStore = create<AppState>((set, get) => ({
         Comments: comments,
         Indicator: "33",
         U_Orden_Venta: String(order.docNum),
-        DocumentLines: order.documentLines.map(l => ({
+        DocumentLines: order.documentLines.filter(l => l.lineStatus === 'bost_Open').map(l => ({
             BaseType: 17,
             BaseEntry: order.docEntry,
             BaseLine: l.lineNum,

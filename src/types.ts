@@ -20,6 +20,7 @@ export interface Filters {
   cc: string; // OcrCode5
   dateFrom: string; // Add date filtering YYYY-MM-DD
   dateTo: string;
+  searchQuery: string;
 }
 
 // Representing the flat fact table subline architecture
@@ -34,10 +35,11 @@ export interface Subline {
   project: string; // ProjectCode from SAP
   costCenter: string; // CostingCode5 from SAP
   currency: string; // Currency
+  rate?: number; // Line Rate
   lineStatus: string; // "bost_Open" or "bost_Close"
 }
 
-export type SheetStatus = 'ready_anticipo' | 'ready_cierre' | 'ready_100' | 'anomaly' | 'pending';
+export type SheetStatus = 'ready_anticipo' | 'ready_cierre' | 'ready_100' | 'anomaly' | 'pending' | 'pending_te4';
 
 export interface SheetAnomaly {
   docNum: number;
@@ -56,12 +58,15 @@ export interface SalesOrder {
   docDueDate: string;
   bplid: string; // Associated branch ID derived from BPLName
   currency: string; // CLP, UF
+  docRate?: number;
   documentLines: Subline[];
   // Derived or summary data for grid
   totalNet: number;
   isCancelled: boolean;
   documentStatus: string; // e.g. "bost_Open", "bost_Close", "bost_Cancel"
   comments?: string; // SBO order comments
+  reference?: string; // Reference1
+  project?: string; // Project
   
   // Sheet Integration Fields
   sheetStatus?: SheetStatus;

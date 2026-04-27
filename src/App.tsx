@@ -1,8 +1,9 @@
-import { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from './store';
 import { formatCurrency, formatDate } from './lib/utils';
-import { Database, LogOut, CheckCircle2, UploadCloud, AlertCircle, ArrowUp, ArrowDown, MoreVertical } from 'lucide-react';
+import { Database, LogOut, CheckCircle2, UploadCloud, AlertCircle, ArrowUp, ArrowDown, MoreVertical, ChevronDown, ChevronRight, Search, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { EditOrderModal } from './components/EditOrderModal';
 
 const formatSheetStatus = (status?: string) => {
   switch(status) {
@@ -10,6 +11,7 @@ const formatSheetStatus = (status?: string) => {
     case 'ready_cierre': return <span className="text-[9px] font-bold uppercase tracking-wider text-green-700 bg-green-100 px-1.5 py-0.5 rounded border border-green-200 flex items-center gap-0.5">Cierre <CheckCircle2 className="w-2.5 h-2.5" /></span>;
     case 'ready_100': return <span className="text-[9px] font-bold uppercase tracking-wider text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded border border-purple-200">100% Excep.</span>;
     case 'anomaly': return <span className="text-[9px] font-bold uppercase tracking-wider text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-200">Bloqueado</span>;
+    case 'pending_te4': return <span className="text-[9px] font-bold uppercase tracking-wider text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded border border-blue-200">Pend. TE4</span>;
     case 'pending': return <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">Pend. Op.</span>;
     default: return <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">N/A</span>;
   }
@@ -20,7 +22,8 @@ export default function App() {
     session, filters, masterData, orders, selectedOrderEntry, selectedSublines,
     setFilters, selectOrder, toggleSubline, toggleAllSublines, connect, disconnect,
     syncMasterData, generateInvoice, getSimulationPayload, fetchOrders,
-    batchSelectedOrders, isProcessingBatch, batchProgress, toggleBatchSelection, toggleAllBatchSelection
+    batchSelectedOrders, isProcessingBatch, batchProgress, toggleBatchSelection, toggleAllBatchSelection,
+    regularizeProjects
   } = useStore();
 
   const [inputUrl, setInputUrl] = useState(session.url);
@@ -32,6 +35,7 @@ export default function App() {
   const [sortColumn, setSortColumn] = useState<string | null>('docNum');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
+  const [editingOrder, setEditingOrder] = useState<number | null>(null);
 
   // Close auto menu on click outside
   useEffect(() => {
@@ -44,12 +48,21 @@ export default function App() {
 
   // Derived state: filtered orders
   const filteredOrders = useMemo(() => {
-    return orders.filter(o => 
-      o.bplid === filters.bplid &&
-      (filters.rut ? o.cardCode.includes(filters.rut) : true) &&
-      (filters.project ? o.documentLines.some(l => l.project?.includes(filters.project)) : true) &&
-      (filters.cc ? o.documentLines.some(l => l.costCenter?.includes(filters.cc)) : true)
-    );
+    return orders.filter(o => {
+      const matchesBplid = o.bplid === filters.bplid;
+      const matchesRut = filters.rut ? o.cardCode.toLowerCase().includes(filters.rut.toLowerCase()) : true;
+      const matchesProject = filters.project ? o.project?.toLowerCase().includes(filters.project.toLowerCase()) : true;
+      const matchesCC = filters.cc ? o.documentLines.some(l => l.costCenter?.toLowerCase().includes(filters.cc.toLowerCase())) : true;
+      
+      const searchLower = filters.searchQuery.toLowerCase();
+      const matchesSearch = filters.searchQuery ? (
+        String(o.docNum).includes(filters.searchQuery) ||
+        o.project?.toLowerCase().includes(searchLower) ||
+        o.reference?.toLowerCase().includes(searchLower)
+      ) : true;
+
+      return matchesBplid && matchesRut && matchesProject && matchesCC && matchesSearch;
+    });
   }, [orders, filters]);
 
   const sortedOrders = useMemo(() => {
@@ -203,7 +216,8 @@ export default function App() {
               <div className="w-1/2">
                 <label className="text-[9px] font-bold text-slate-400 uppercase">F. Desde</label>
                 <input 
-                  type="date" 
+                  type="text" 
+                  placeholder="DD-MM-YYYY"
                   className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400" 
                   value={filters.dateFrom}
                   onChange={e => setFilters({ dateFrom: e.target.value })}
@@ -213,7 +227,8 @@ export default function App() {
               <div className="w-1/2">
                 <label className="text-[9px] font-bold text-slate-400 uppercase">F. Hasta</label>
                 <input 
-                  type="date" 
+                  type="text" 
+                  placeholder="DD-MM-YYYY"
                   className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400" 
                   value={filters.dateTo}
                   onChange={e => setFilters({ dateTo: e.target.value })}
@@ -222,30 +237,14 @@ export default function App() {
               </div>
             </div>
 
-            <input 
-              type="text" 
-              placeholder="RUT / CardCode" 
-              className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400" 
-              value={filters.rut}
-              onChange={e => setFilters({ rut: e.target.value })}
-              disabled={!session.isConnected || masterData.bplids.length === 0}
-            />
-            <input 
-              type="text" 
-              placeholder="Proyecto (ProjectCode)" 
-              className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400" 
-              value={filters.project}
-              onChange={e => setFilters({ project: e.target.value })}
-              disabled={!session.isConnected || masterData.bplids.length === 0}
-            />
-            <input 
-              type="text" 
-              placeholder="Centro Costo (CostingCode5)" 
-              className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400" 
-              value={filters.cc}
-              onChange={e => setFilters({ cc: e.target.value })}
-              disabled={!session.isConnected || masterData.bplids.length === 0}
-            />
+            <button 
+              onClick={handleFetchOrders}
+              disabled={!session.isConnected || isFetchingOrders}
+              className="w-full py-2 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700 transition-colors shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <Search className="w-3.5 h-3.5" />
+              {isFetchingOrders ? 'Cargando...' : 'Consultar SAP'}
+            </button>
           </div>
         </div>
         
@@ -357,6 +356,90 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        {/* Search Module Bar */}
+        <div className="px-6 py-4 bg-white border-b border-slate-200 shrink-0 z-10 shadow-sm">
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-4">
+              <div className="relative flex-1 max-w-xl">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Search className="h-4 w-4 text-slate-400" />
+                </div>
+                <input 
+                  type="text"
+                  placeholder="Buscar por Número de OV / Documento SAP..."
+                  className="block w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all shadow-inner"
+                  value={filters.searchQuery}
+                  onChange={e => setFilters({ searchQuery: e.target.value })}
+                  onKeyDown={e => e.key === 'Enter' && handleFetchOrders()}
+                />
+              </div>
+              <button 
+                onClick={handleFetchOrders}
+                disabled={!session.isConnected || isFetchingOrders}
+                className="px-6 py-2 bg-slate-800 text-white rounded-lg text-sm font-bold hover:bg-slate-900 transition-all shadow-md flex items-center gap-2"
+              >
+                {isFetchingOrders ? (
+                  <>
+                    <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Buscando...
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4" />
+                    Ejecutar Búsqueda en SAP
+                  </>
+                )}
+              </button>
+              
+              <button 
+                onClick={() => regularizeProjects(sortedOrders)}
+                disabled={!session.isConnected || isFetchingOrders || isProcessingBatch}
+                className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-[11px] font-bold hover:bg-indigo-100 transition-all border border-indigo-200 flex items-center gap-2"
+                title="Sincroniza proyectos de líneas a cabecera para mejorar la búsqueda"
+              >
+                {isProcessingBatch && batchProgress ? (
+                  <>
+                    <div className="w-3 h-3 border-2 border-indigo-500/30 border-t-indigo-600 rounded-full animate-spin" />
+                    <span>Procesando... {batchProgress.current}/{batchProgress.total}</span>
+                  </>
+                ) : (
+                  <>
+                    <Database className="w-3.5 h-3.5" />
+                    <span>Regularizar Proyectos</span>
+                  </>
+                )}
+              </button>
+            </div>
+            
+            <div className="flex items-center gap-4 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400 font-bold uppercase tracking-tight text-[10px]">Filtros API:</span>
+                <input 
+                  type="text" 
+                  placeholder="RUT Cliente" 
+                  className="px-3 py-1.5 border border-slate-200 rounded-md bg-white focus:ring-1 focus:ring-blue-500 outline-none w-40"
+                  value={filters.rut}
+                  onChange={e => setFilters({ rut: e.target.value })}
+                />
+                <input 
+                  type="text" 
+                  placeholder="Código Proyecto" 
+                  className="px-3 py-1.5 border border-slate-200 rounded-md bg-white focus:ring-1 focus:ring-blue-500 outline-none w-40"
+                  value={filters.project}
+                  onChange={e => setFilters({ project: e.target.value })}
+                />
+                <input 
+                  type="text" 
+                  placeholder="Centro Costo" 
+                  className="px-3 py-1.5 border border-slate-200 rounded-md bg-white focus:ring-1 focus:ring-blue-500 outline-none w-40"
+                  value={filters.cc}
+                  onChange={e => setFilters({ cc: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Tables Container (Split Layout) */}
         <div className="flex-1 p-6 space-y-6 overflow-hidden flex flex-col relative z-0">
@@ -498,16 +581,25 @@ export default function App() {
                         {sortColumn !== 'sheetStatus' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
                       </div>
                     </th>
-                    <th className="p-3 font-semibold max-w-[120px] cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('costCenter')}>
+                    <th className="p-3 font-semibold max-w-[100px] cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('costCenter')}>
                       <div className="flex items-center gap-1">
-                        C. Costo (Ej)
+                        C. Costo (D5)
                         {sortColumn === 'costCenter' && (sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />)}
                         {sortColumn !== 'costCenter' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
                       </div>
                     </th>
-                    <th className="p-3 font-semibold text-right w-28 cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('totalNet')}>
+                    <th className="p-3 font-semibold text-left">Ref.</th>
+                    <th className="p-3 font-semibold text-left w-32 cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('project')}>
+                       <div className="flex items-center gap-1">
+                        Proyecto
+                        {sortColumn === 'project' && (sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />)}
+                        {sortColumn !== 'project' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
+                      </div>
+                    </th>
+                    <th className="p-3 font-semibold text-center w-16">Divisa</th>
+                    <th className="p-3 font-semibold text-right w-32 cursor-pointer hover:text-slate-700 select-none group" onClick={() => handleSort('totalNet')}>
                       <div className="flex items-center justify-end gap-1">
-                        Total (Neto)
+                        Total (Neto, CLP)
                         {sortColumn === 'totalNet' && (sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />)}
                         {sortColumn !== 'totalNet' && <ArrowUp className="w-3 h-3 text-transparent group-hover:text-slate-300" />}
                       </div>
@@ -519,73 +611,256 @@ export default function App() {
                   {sortedOrders.map(o => {
                     const isChecked = batchSelectedOrders.includes(o.docEntry);
                     const isClosed = o.documentStatus === 'bost_Close' || o.documentStatus === 'bost_Cancel' || o.isCancelled;
+                    const isExpanded = selectedOrderEntry === o.docEntry;
+                    
                     return (
-                    <tr 
-                      key={o.docEntry} 
-                      className={`cursor-pointer transition-colors ${selectedOrderEntry === o.docEntry ? 'bg-blue-50/50' : 'hover:bg-slate-50/80'} ${isChecked ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'} ${o.sheetStatus === 'anomaly' ? 'bg-red-50 hover:bg-red-100 opacity-60 border-l-red-500' : ''} ${isClosed ? 'opacity-50 grayscale bg-slate-100 hover:bg-slate-200' : ''}`}
-                      onClick={() => o.sheetStatus === 'anomaly' ? null : selectOrder(o.docEntry === selectedOrderEntry ? null : o.docEntry)}
-                    >
-                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <input 
-                          type="checkbox"
-                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:bg-slate-200 cursor-pointer"
-                          checked={isChecked}
-                          onChange={() => toggleBatchSelection(o.docEntry)}
-                          disabled={isProcessingBatch || o.sheetStatus === 'anomaly' || isClosed}
-                        />
-                      </td>
-                      <td className={`p-3 font-bold ${selectedOrderEntry === o.docEntry ? 'text-blue-700' : 'text-slate-700'}`}>
-                        {o.docNum}
-                        <div className="text-[9px] font-mono font-normal text-slate-400 mt-0.5">{o.sheetRef || ''}</div>
-                      </td>
-                      <td className="p-3 font-mono text-slate-400 text-[10px]">{o.docEntry}</td>
-                      <td className="p-3 text-[11px] truncate whitespace-nowrap">{o.cardCode} <span className="font-medium text-slate-500"></span></td>
-                      <td className="p-3 text-[11px] whitespace-nowrap">{formatDate(o.docDate)}</td>
-                      <td className="p-3 text-center">
-                         {isClosed ? <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded border border-slate-300">Cerrado en SAP</span> : formatSheetStatus(o.sheetStatus)}
-                      </td>
-                      <td className="p-3 text-[11px] text-slate-500 truncate max-w-[120px]">{o.documentLines[0]?.costCenter || "-"}</td>
-                      <td className="p-3 text-right font-mono font-semibold">{o.currency === 'CLP' ? formatCurrency(o.totalNet) : `${o.totalNet} UF`}</td>
-                      <td className="p-3 text-center relative" onClick={(e) => e.stopPropagation()}>
-                        {!isClosed && (
-                          <>
-                            <button 
-                              className="text-slate-400 hover:text-slate-700 transition-colors p-1 rounded hover:bg-slate-100"
-                              onClick={() => setActiveMenu(activeMenu === o.docEntry ? null : o.docEntry)}
-                              disabled={isProcessingBatch}
-                            >
-                              <MoreVertical className="w-4 h-4" />
-                            </button>
-                            <AnimatePresence>
-                              {activeMenu === o.docEntry && (
-                                <motion.div 
-                                  initial={{ opacity: 0, scale: 0.95, y: -5 }} 
-                                  animate={{ opacity: 1, scale: 1, y: 0 }} 
-                                  exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                                  transition={{ duration: 0.15 }}
-                                  className="absolute right-8 top-2 bg-white shadow-xl border border-slate-200 rounded-md py-1 z-50 w-36 flex flex-col items-stretch overflow-hidden origin-top-right text-left"
+                      <React.Fragment key={o.docEntry}>
+                        <tr 
+                          className={`cursor-pointer transition-colors ${isExpanded ? 'bg-blue-50/50' : 'hover:bg-slate-50/80'} ${isChecked ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'} ${o.sheetStatus === 'anomaly' ? 'bg-red-50 hover:bg-red-100 opacity-60 border-l-red-500' : ''} ${isClosed ? 'opacity-50 grayscale bg-slate-100 hover:bg-slate-200' : ''}`}
+                          onClick={() => o.sheetStatus === 'anomaly' ? null : selectOrder(isExpanded ? null : o.docEntry)}
+                        >
+                          <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center gap-2 justify-center ml-2">
+                              {o.sheetStatus !== 'anomaly' ? (
+                                <button className="text-slate-400 hover:text-slate-600 focus:outline-none" onClick={(e) => { e.stopPropagation(); selectOrder(isExpanded ? null : o.docEntry); }}>
+                                  {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                </button>
+                              ) : <div className="w-4 h-4"></div>}
+                              <input 
+                                type="checkbox"
+                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:bg-slate-200 cursor-pointer"
+                                checked={isChecked}
+                                onChange={() => toggleBatchSelection(o.docEntry)}
+                                disabled={isProcessingBatch || o.sheetStatus === 'anomaly' || o.sheetStatus === 'pending' || o.sheetStatus === 'pending_te4' || isClosed}
+                              />
+                            </div>
+                          </td>
+                          <td className={`p-3 font-bold ${isExpanded ? 'text-blue-700' : 'text-slate-700'}`}>
+                            {o.docNum}
+                            <div className="text-[9px] font-mono font-normal text-slate-400 mt-0.5">{o.sheetRef || ''}</div>
+                          </td>
+                          <td className="p-3 font-mono text-slate-400 text-[10px]">{o.docEntry}</td>
+                          <td className="p-3 text-[11px] truncate whitespace-nowrap">{o.cardCode} <span className="font-medium text-slate-500"></span></td>
+                          <td className="p-3 text-[11px] whitespace-nowrap">{formatDate(o.docDate)}</td>
+                          <td className="p-3 text-center">
+                             {isClosed ? <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded border border-slate-300">Cerrado en SAP</span> : formatSheetStatus(o.sheetStatus)}
+                          </td>
+                          <td className="p-3 text-[11px] text-slate-500 truncate max-w-[100px]">{o.documentLines[0]?.costCenter || "-"}</td>
+                          <td className="p-3 text-[11px] text-slate-600 truncate max-w-[80px] font-medium italic">{o.reference || "-"}</td>
+                          <td className="p-3 text-[11px] text-indigo-600 truncate max-w-[120px] font-bold">
+                            {o.project ? o.project : (
+                              (() => {
+                                const lineProj = o.documentLines.find(l => l.project && l.project.trim() !== '')?.project;
+                                return lineProj ? (
+                                  <span className="text-slate-400 font-normal italic flex items-center gap-1" title="Sugerencia basada en líneas">
+                                    <ArrowRight className="w-2.5 h-2.5 text-indigo-300" />
+                                    {lineProj}
+                                  </span>
+                                ) : "-";
+                              })()
+                            )}
+                          </td>
+                          <td className="p-3 text-[11px] text-center font-semibold text-slate-600">{o.currency}</td>
+                          <td className="p-3 text-right font-mono font-semibold">{formatCurrency(o.totalNet)}</td>
+                          <td className="p-3 text-center relative" onClick={(e) => e.stopPropagation()}>
+                            {!isClosed && (
+                              <>
+                                <button 
+                                  className="text-slate-400 hover:text-slate-700 transition-colors p-1 rounded hover:bg-slate-100"
+                                  onClick={() => setActiveMenu(activeMenu === o.docEntry ? null : o.docEntry)}
+                                  disabled={isProcessingBatch}
                                 >
-                                  <button 
-                                    className="px-4 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 text-left transition-colors"
-                                    onClick={() => { setActiveMenu(null); useStore.getState().invoiceFullOrder(o.docEntry); }}
-                                  >
-                                    Facturar Orden
-                                  </button>
-                                  <div className="h-px bg-slate-100 my-1 cursor-default"></div>
-                                  <button 
-                                    className="px-4 py-2 text-[11px] font-semibold text-red-600 hover:bg-red-50 text-left transition-colors"
-                                    onClick={() => { setActiveMenu(null); useStore.getState().closeOrder(o.docEntry); }}
-                                  >
-                                    Cerrar Orden
-                                  </button>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </>
+                                  <MoreVertical className="w-4 h-4" />
+                                </button>
+                                <AnimatePresence>
+                                  {activeMenu === o.docEntry && (
+                                    <motion.div 
+                                      initial={{ opacity: 0, scale: 0.95, y: -5 }} 
+                                      animate={{ opacity: 1, scale: 1, y: 0 }} 
+                                      exit={{ opacity: 0, scale: 0.95, y: -5 }}
+                                      transition={{ duration: 0.15 }}
+                                      className="absolute right-8 top-2 bg-white shadow-xl border border-slate-200 rounded-md py-1 z-50 w-36 flex flex-col items-stretch overflow-hidden origin-top-right text-left"
+                                    >
+                                      <button 
+                                        className="px-4 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 text-left transition-colors"
+                                        onClick={() => { setActiveMenu(null); useStore.getState().invoiceFullOrder(o.docEntry); }}
+                                      >
+                                        Facturar Orden
+                                      </button>
+                                      <button 
+                                        className="px-4 py-2 text-[11px] font-semibold text-blue-700 hover:bg-blue-50 text-left transition-colors"
+                                        onClick={() => { setActiveMenu(null); setEditingOrder(o.docEntry); }}
+                                      >
+                                        Modificar Orden
+                                      </button>
+                                      <div className="h-px bg-slate-100 my-1 cursor-default"></div>
+                                      <button 
+                                        className="px-4 py-2 text-[11px] font-semibold text-red-600 hover:bg-red-50 text-left transition-colors"
+                                        onClick={() => { setActiveMenu(null); useStore.getState().closeOrder(o.docEntry); }}
+                                      >
+                                        Cerrar Orden
+                                      </button>
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr key={`${o.docEntry}-nested`} className="bg-slate-50/50">
+                            <td colSpan={9} className="p-0 border-b border-slate-200">
+                              <div className="p-4 pl-16 pr-8 animate-in fade-in slide-in-from-top-2 duration-200 ease-out">
+                                <div className="bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col overflow-hidden max-h-[400px]">
+                                  {/* Inner JSON payload dev option */}
+                                  <div className="px-4 py-2 bg-slate-800 text-white flex justify-between items-center shrink-0 h-10">
+                                    <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-300">
+                                      Líneas del Documento ({o.currency})
+                                    </h3>
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-[9px] text-slate-400 uppercase font-semibold tracking-wider">JSON Sim Mode</span>
+                                      <div 
+                                        className={`w-7 h-3.5 rounded-full flex items-center px-0.5 shadow-inner cursor-pointer transition-colors ${isSimulating ? 'bg-blue-500' : 'bg-slate-600'}`}
+                                        onClick={() => setIsSimulating(!isSimulating)}
+                                      >
+                                        <div className={`w-2.5 h-2.5 bg-white rounded-full transition-transform ${isSimulating ? 'translate-x-3.5' : ''}`}></div>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex-1 flex overflow-hidden min-h-0">
+                                    {/* Table Content */}
+                                    <div className={`flex-1 overflow-auto bg-white transition-all ${isSimulating ? 'w-1/2 border-r border-slate-200' : 'w-full'}`}>
+                                      <table className="w-full text-[10px] text-left border-collapse">
+                                        <thead className="bg-slate-50 text-slate-500 uppercase font-semibold tracking-tight sticky top-0 shadow-sm z-10">
+                                          <tr>
+                                            <th className="py-1.5 px-3 w-10 text-center font-bold">Línea</th>
+                                            <th className="py-1.5 px-3 w-10 text-center">
+                                              <input 
+                                                type="checkbox" 
+                                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                                checked={o.documentLines.filter(l => l.lineStatus === 'bost_Open').length === selectedSublines.length && selectedSublines.length > 0}
+                                                onChange={(e) => toggleAllSublines(e.target.checked)}
+                                              />
+                                            </th>
+                                            <th className="py-1.5 px-3">Código</th>
+                                            <th className="py-1.5 px-3">Descripción</th>
+                                            <th className="py-1.5 px-3">Status</th>
+                                            <th className="py-1.5 px-3">Proyecto</th>
+                                            <th className="py-1.5 px-3">C.Costo</th>
+                                            <th className="py-1.5 px-3 text-right">Cant.</th>
+                                            <th className="py-1.5 px-3 text-right">Precio Un.</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                          {o.documentLines.map(line => {
+                                            const isChecked = selectedSublines.includes(line.lineNum);
+                                            const isOpen = line.lineStatus === 'bost_Open';
+                                            const isAnomaly = o.sheetStatus === 'anomaly';
+                                            
+                                            // Disable logic
+                                            const isLineLocked = !isOpen || isAnomaly || o.sheetStatus === 'pending' || o.sheetStatus === 'pending_te4' || (
+                                              o.sheetStatus === 'ready_anticipo' && line.lineNum !== 0
+                                            ) || (
+                                              o.sheetStatus === 'ready_cierre' && line.lineNum !== 1
+                                            ) || (
+                                              o.sheetStatus === 'ready_100' && line.lineNum !== 0
+                                            );
+
+                                            return (
+                                              <tr key={line.lineNum} className={`transition-colors ${isChecked ? 'bg-blue-50/40' : 'hover:bg-slate-50'} ${isLineLocked ? 'opacity-50 cursor-not-allowed bg-slate-100 hover:bg-slate-100' : ''}`} onClick={() => !isLineLocked && toggleSubline(line.lineNum)}>
+                                                <td className="py-1.5 px-3 text-center">
+                                                  <span className="font-mono font-bold text-slate-400 block">{line.lineNum}</span>
+                                                  <span className="text-[8px] uppercase tracking-wider font-semibold text-slate-500">
+                                                    {line.lineNum === 0 ? 'Anticipo' : line.lineNum === 1 ? 'Certificado' : line.lineNum === 2 ? 'Conectado' : ''}
+                                                  </span>
+                                                </td>
+                                                <td className="py-1.5 px-3 text-center" onClick={e => !isLineLocked && e.stopPropagation()}>
+                                                  <input 
+                                                    type="checkbox" 
+                                                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:bg-slate-200"
+                                                    checked={isChecked}
+                                                    onChange={() => toggleSubline(line.lineNum)}
+                                                    disabled={isLineLocked}
+                                                  />
+                                                </td>
+                                                <td className="py-1.5 px-3 font-mono break-words text-slate-500">{line.itemCode}</td>
+                                                <td className="py-1.5 px-3 font-medium text-slate-700 truncate max-w-[120px]">{line.dscription}</td>
+                                                <td className="py-1.5 px-3 text-[9px] font-semibold">{line.lineStatus === 'bost_Open' ? 'Abierta' : 'Cerrada'}</td>
+                                                <td className="py-1.5 px-3 text-slate-400">{line.project}</td>
+                                                <td className="py-1.5 px-3 text-slate-400">{line.costCenter}</td>
+                                                <td className="py-1.5 px-3 text-right font-semibold text-slate-600">{line.quantity}</td>
+                                                <td className="py-1.5 px-3 text-right font-mono text-slate-500">{formatCurrency(line.price)} {line.currency && line.currency !== 'CLP' ? `(${line.currency})` : ''}</td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                    
+                                    {/* Simulation Area */}
+                                    {isSimulating && (
+                                      <div className="w-1/2 bg-slate-900 text-slate-300 p-4 font-mono text-[9px] overflow-auto flex flex-col shadow-inner">
+                                        <p className="text-slate-500 mb-2 font-sans font-bold uppercase tracking-widest text-[8px]">Preview: oInvoices Service Layer payload</p>
+                                        {jsonPayload ? (
+                                          <pre className="whitespace-pre-wrap leading-relaxed text-blue-300">
+                                            {JSON.stringify(jsonPayload, null, 2)}
+                                          </pre>
+                                        ) : (
+                                          <div className="flex-1 flex items-center justify-center text-slate-500 italic font-sans text-[10px]">
+                                            Selecciona al menos una línea para generar Payload
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Action Footer for this Order */}
+                                  <div className="p-2.5 bg-slate-50 border-t border-slate-200 flex justify-between items-center shrink-0">
+                                    <div className="text-[10px] text-slate-500 flex items-center gap-2">
+                                      <span className="font-bold uppercase tracking-tight">Status:</span> 
+                                      {selectedSublines.length > 0 ? (
+                                        <span className="bg-green-200 text-green-800 px-2 py-0.5 rounded font-bold">{selectedSublines.length} líneas</span>
+                                      ) : (
+                                        <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded font-medium">0 líneas seleccionadas</span>
+                                      )}
+                                      {selectedSublines.length > 0 && (
+                                        <>
+                                          <div className="w-px h-3 bg-slate-300 mx-2"></div>
+                                          <span className="font-bold uppercase tracking-tight">Pagaré:</span>
+                                          <span className="font-mono font-black text-slate-800 text-xs">
+                                            {formatCurrency(o.documentLines.filter(l => selectedSublines.includes(l.lineNum)).reduce((sum, l) => sum + (l.price * l.quantity), 0))}
+                                            {o.currency && o.currency !== 'CLP' ? ` (${o.currency})` : ''}
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+                                    <div className="flex gap-2">
+                                      {!isSimulating && (
+                                        <button 
+                                          onClick={() => setIsSimulating(true)}
+                                          className="px-3 py-1 border border-slate-300 text-slate-600 text-[10px] font-bold rounded hover:bg-white transition-all"
+                                        >
+                                          SIMULAR P/L
+                                        </button>
+                                      )}
+                                      <button 
+                                        onClick={handleInvoice}
+                                        disabled={!jsonPayload}
+                                        className="px-5 py-1 bg-blue-600 text-white text-[10px] font-bold rounded shadow-sm hover:bg-blue-700 transition-all font-mono disabled:opacity-50 disabled:shadow-none"
+                                      >
+                                        EJECUTAR (SAP)
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
                         )}
-                      </td>
-                    </tr>
-                  )})}
+                      </React.Fragment>
+                    );
+                  })}
                   {filteredOrders.length === 0 && session.isConnected && (
                     <tr>
                       <td colSpan={9} className="p-8 text-center text-slate-400 italic">No hay órdenes vigentes para los filtros seleccionados (Recuerda presionar Extraer OVs).</td>
@@ -595,156 +870,15 @@ export default function App() {
               </table>
             </div>
           </section>
-
-          {/* Sublines / Detail Section */}
-          <section className={`transition-all duration-300 ease-in-out bg-slate-100 border border-slate-200 rounded-lg flex flex-col overflow-hidden shrink-0 ${selectedOrderEntry ? 'h-64' : 'h-12'}`}>
-            <div className="px-4 py-2 bg-slate-800 text-white flex justify-between items-center shrink-0 h-12">
-              <h3 className="text-[11px] font-bold uppercase tracking-wider">
-                {selectedOrderEntry ? `Líneas del Documento #${selectedOrderEntry} (${selectedOrder?.currency})` : 'Seleccione una Orden para ver detalles'}
-              </h3>
-              {selectedOrderEntry && (
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] text-slate-300 uppercase font-semibold tracking-wider">JSON Simulation Mode</span>
-                  <div 
-                    className={`w-8 h-4 rounded-full flex items-center px-1 shadow-inner cursor-pointer transition-colors ${isSimulating ? 'bg-blue-500' : 'bg-slate-600'}`}
-                    onClick={() => setIsSimulating(!isSimulating)}
-                  >
-                    <div className={`w-2.5 h-2.5 bg-white rounded-full transition-transform ${isSimulating ? 'translate-x-3.5' : ''}`}></div>
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            {/* Split Panel inside bottom section depending on Simulation toggle */}
-            {selectedOrderEntry && (
-              <div className="flex-1 flex overflow-hidden">
-                {/* Table Portion */}
-                <div className={`flex-1 overflow-auto bg-white transition-all ${isSimulating ? 'w-1/2 border-r border-slate-200' : 'w-full'}`}>
-                  <table className="w-full text-[11px] text-left border-collapse">
-                    <thead className="bg-slate-50 text-slate-600 uppercase font-semibold tracking-tight sticky top-0 shadow-sm z-10">
-                      <tr>
-                        <th className="p-2 w-10 text-center">
-                          <input 
-                            type="checkbox" 
-                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                            checked={selectedOrder?.documentLines.filter(l => l.lineStatus === 'bost_Open').length === selectedSublines.length && selectedSublines.length > 0}
-                            onChange={(e) => toggleAllSublines(e.target.checked)}
-                          />
-                        </th>
-                        <th className="p-2">ItemCode</th>
-                        <th className="p-2">Descripción</th>
-                        <th className="p-2">Status</th>
-                        <th className="p-2">Proyecto</th>
-                        <th className="p-2">C.Costo</th>
-                        <th className="p-2 text-right">Cant.</th>
-                        <th className="p-2 text-right">Precio Un.</th>
-                        <th className="p-2 text-right">Subtotal</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {selectedOrder?.documentLines.map(line => {
-                        const isChecked = selectedSublines.includes(line.lineNum);
-                        const isOpen = line.lineStatus === 'bost_Open';
-                        const isAnomaly = selectedOrder.sheetStatus === 'anomaly';
-                        
-                        // Disable specific lines based on new policy if a sheet status is present, but keep open if manual overide is expected 
-                        // But for anomaly, we lock completely
-                        const isLineLocked = !isOpen || isAnomaly || (
-                          selectedOrder.sheetStatus === 'ready_anticipo' && line.lineNum !== 0
-                        ) || (
-                          selectedOrder.sheetStatus === 'ready_cierre' && line.lineNum !== 1
-                        );
-
-                        return (
-                          <tr key={line.lineNum} className={`transition-colors ${isChecked ? 'bg-blue-50/40' : 'hover:bg-slate-50'} ${isLineLocked && 'opacity-50 cursor-not-allowed bg-slate-100 hover:bg-slate-100'}`} onClick={() => !isLineLocked && toggleSubline(line.lineNum)}>
-                            <td className="p-2 text-center" onClick={e => !isLineLocked && e.stopPropagation()}>
-                              <input 
-                                type="checkbox" 
-                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:bg-slate-200"
-                                checked={isChecked}
-                                onChange={() => toggleSubline(line.lineNum)}
-                                disabled={isLineLocked}
-                              />
-                            </td>
-                            <td className="p-2 font-mono break-words">{line.itemCode}</td>
-                            <td className="p-2 font-medium text-slate-700 truncate max-w-[150px]">{line.dscription}</td>
-                            <td className="p-2 text-xs font-semibold">{line.lineStatus === 'bost_Open' ? 'Abierta' : 'Cerrada'}</td>
-                            <td className="p-2 text-slate-500">{line.project}</td>
-                            <td className="p-2 text-slate-500">{line.costCenter}</td>
-                            <td className="p-2 text-right font-semibold">{line.quantity}</td>
-                            <td className="p-2 text-right font-mono">{line.currency === 'CLP' ? formatCurrency(line.price) : `${line.price} UF`}</td>
-                            <td className="p-2 text-right font-mono font-medium text-slate-800">{line.currency === 'CLP' ? formatCurrency(line.price * line.quantity) : `${line.price * line.quantity} UF`}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Simulation Portion */}
-                {isSimulating && (
-                  <div className="w-1/2 bg-slate-900 text-slate-300 p-4 font-mono text-[10px] overflow-auto flex flex-col shadow-inner">
-                    <p className="text-slate-500 mb-2 font-sans font-bold uppercase tracking-widest text-[9px]">Preview: oInvoices Service Layer payload</p>
-                    {jsonPayload ? (
-                      <pre className="whitespace-pre-wrap leading-relaxed text-blue-300">
-                        {JSON.stringify(jsonPayload, null, 2)}
-                      </pre>
-                    ) : (
-                      <div className="flex-1 flex items-center justify-center text-slate-500 italic font-sans text-xs">
-                        Selecciona al menos una línea para generar Payload
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-            
-            {/* Action Footer */}
-            {selectedOrderEntry && (
-              <div className="p-3 bg-white border-t border-slate-200 flex justify-between items-center shrink-0">
-                <div className="text-xs text-slate-500 flex items-center gap-2">
-                  <span className="font-semibold uppercase tracking-tight">Status:</span> 
-                  {selectedSublines.length > 0 ? (
-                    <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium">{selectedSublines.length} líneas preparadas</span>
-                  ) : (
-                    <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-medium">Borrador inicial</span>
-                  )}
-                  {selectedSublines.length > 0 && selectedOrder && (
-                    <>
-                      <div className="w-px h-4 bg-slate-300 mx-2"></div>
-                      <span className="font-semibold uppercase tracking-tight">Total Factura:</span>
-                      <span className="font-mono font-bold text-slate-800 text-sm">
-                        {selectedOrder.currency === 'CLP' 
-                          ? formatCurrency(selectedOrder.documentLines.filter(l => selectedSublines.includes(l.lineNum)).reduce((sum, l) => sum + (l.price * l.quantity), 0))
-                          : `${selectedOrder.documentLines.filter(l => selectedSublines.includes(l.lineNum)).reduce((sum, l) => sum + (l.price * l.quantity), 0)} UF`
-                        }
-                      </span>
-                    </>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  {!isSimulating && (
-                    <button 
-                      onClick={() => setIsSimulating(true)}
-                      className="px-4 py-1.5 border border-slate-300 text-slate-700 text-xs font-semibold rounded hover:bg-slate-50 transition-all focus:ring-2 focus:ring-slate-200"
-                    >
-                      Simular Facturación
-                    </button>
-                  )}
-                  <button 
-                    onClick={handleInvoice}
-                    disabled={!jsonPayload}
-                    className="px-6 py-1.5 bg-blue-700 text-white text-xs font-bold rounded shadow-lg shadow-blue-200 hover:bg-blue-800 transition-all focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:shadow-none"
-                  >
-                    GENERAR FACTURA (Deudores)
-                  </button>
-                </div>
-              </div>
-            )}
-          </section>
-
         </div>
       </main>
+
+      {editingOrder !== null && (
+        <EditOrderModal 
+          orderEntry={editingOrder} 
+          onClose={() => setEditingOrder(null)} 
+        />
+      )}
     </div>
   );
 }
