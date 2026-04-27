@@ -164,8 +164,8 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl flex flex-col max-h-[90vh] overflow-hidden border border-slate-200">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="bg-white rounded-md shadow-2xl w-full max-w-5xl flex flex-col max-h-[90vh] overflow-hidden border border-slate-200">
         
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
@@ -213,23 +213,23 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
               </div>
             </div>
             
-            <div className="col-span-1 border border-slate-100 bg-slate-50/50 rounded-xl p-5 space-y-4">
+            <div className="col-span-1 border border-slate-100 bg-slate-50/80 rounded-md p-5 space-y-4 shadow-inner">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Divisa Documento</p>
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-lg font-bold text-slate-700">{displayCurrency}</span>
-                  {useLineCurrency && <span className="text-[10px] bg-blue-100 text-blue-700 font-bold px-1.5 py-0.5 rounded">Líneas</span>}
+                  {useLineCurrency && <span className="text-[10px] bg-blue-50 text-blue-700 font-bold px-1.5 py-0.5 rounded-sm border border-blue-200">Líneas</span>}
                 </div>
               </div>
-              <div className="h-px bg-slate-100"></div>
+              <div className="h-px bg-slate-200/60"></div>
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Valorización del Día</p>
-                <p className="font-mono font-medium text-slate-800">{docRateDisplay}</p>
+                <p className="font-mono font-medium text-slate-800 tabular-nums">{docRateDisplay}</p>
               </div>
-              <div className="h-px bg-slate-100"></div>
+              <div className="h-px bg-slate-200/60"></div>
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Monto Final</p>
-                <p className="font-mono text-xl font-bold text-blue-700">
+                <p className="font-mono text-xl font-bold text-blue-800 tabular-nums tracking-tight">
                    {finalAmountDisplay}
                 </p>
               </div>
@@ -243,7 +243,7 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
               </h3>
               <button 
                 onClick={handleAddLine}
-                className="text-[11px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors"
+                className="text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-sm flex items-center gap-1.5 transition-colors border border-blue-200/50 shadow-sm"
                >
                 <Plus className="w-3.5 h-3.5" />
                 Agregar Línea
@@ -357,14 +357,14 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
         <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
           <button 
             onClick={onClose}
-            className="px-4 py-2 rounded text-sm font-semibold text-slate-600 hover:bg-slate-200 transition-colors"
+            className="px-4 py-2 rounded-sm text-sm font-semibold text-slate-600 hover:bg-slate-200 transition-colors"
           >
             Cancelar
           </button>
           <button 
             onClick={handleSave}
             disabled={isSaving}
-            className="px-6 py-2 rounded text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-sm"
+            className="px-6 py-2 rounded-sm text-sm font-semibold text-white bg-blue-800 hover:bg-blue-900 disabled:opacity-50 transition-colors shadow-sm"
           >
             {isSaving ? 'Guardando...' : 'Aplicar Cambios'}
           </button>

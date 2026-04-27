@@ -97,6 +97,19 @@ export default function App() {
   const selectedOrder = orders.find(o => o.docEntry === selectedOrderEntry);
   const jsonPayload = getSimulationPayload();
 
+  const handleDateChange = (key: 'dateFrom' | 'dateTo', value: string) => {
+    const prevValue = filters[key] || '';
+    if (value.length < prevValue.length) {
+      setFilters({ [key]: value });
+      return;
+    }
+    const clean = value.replace(/[^\d]/g, '');
+    let formatted = clean;
+    if (clean.length > 2) formatted = clean.slice(0, 2) + '/' + clean.slice(2);
+    if (clean.length > 4) formatted = formatted.slice(0, 5) + '/' + clean.slice(4, 8);
+    setFilters({ [key]: formatted.slice(0, 10) });
+  };
+
   const handleConnect = () => {
     if (inputUrl && inputCompanyDb && inputUser && inputPass) {
       connect(inputUrl, inputCompanyDb, inputUser, inputPass);
@@ -117,15 +130,15 @@ export default function App() {
   return (
     <div className="flex h-screen w-full bg-slate-50 text-slate-800 font-sans overflow-hidden">
       {/* SIDEBAR: Credentials & Global Actions */}
-      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 shadow-sm z-10">
-        <div className="p-4 border-b border-slate-100 bg-slate-900 text-white">
+      <aside className="w-64 bg-blue-950 border-r border-blue-900 flex flex-col shrink-0 shadow-xl z-10">
+        <div className="p-4 border-b border-blue-900 bg-blue-950 text-white">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-blue-500 rounded flex items-center justify-center font-bold text-xs shadow-inner shadow-blue-400">S1</div>
-              <h1 className="text-sm font-semibold tracking-tight uppercase">SBO Portal Analista</h1>
+              <div className="w-6 h-6 bg-blue-600 rounded-sm flex items-center justify-center font-bold text-xs shadow-inner shadow-blue-500 text-white">S1</div>
+              <h1 className="text-sm font-semibold tracking-tight uppercase text-white">SBO Portal Analista</h1>
             </div>
             {session.isConnected && (
-              <button onClick={disconnect} className="text-slate-400 hover:text-white" title="Desconectar">
+              <button onClick={disconnect} className="text-blue-300 hover:text-white transition-colors" title="Desconectar">
                 <LogOut className="w-4 h-4 ml-2" />
               </button>
             )}
@@ -135,14 +148,14 @@ export default function App() {
         <div className="p-4 flex-1 space-y-4 overflow-y-auto">
           {/* Credentials Panel */}
           <div className="space-y-3">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center justify-between">
+            <label className="text-[10px] font-bold text-blue-300 uppercase tracking-widest flex items-center justify-between">
               Credenciales Service Layer
-              {session.isConnected && <CheckCircle2 className="w-3 h-3 text-green-500" />}
+              {session.isConnected && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
             </label>
             <input 
               type="text" 
               placeholder="https://sbo-server:50000/b1s/v2" 
-              className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-sm disabled:opacity-50" 
+              className="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 text-white placeholder-blue-200/40 rounded-sm focus:outline-none focus:ring-1 focus:ring-blue-400 focus:bg-white/10 transition-all shadow-inner disabled:opacity-50" 
               value={inputUrl}
               onChange={e => setInputUrl(e.target.value)}
               disabled={session.isConnected}
@@ -150,7 +163,7 @@ export default function App() {
             <input 
               type="text" 
               placeholder="CompanyDB (Ej: SBOFLUXSOLAR)" 
-              className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded shadow-sm disabled:opacity-50" 
+              className="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 text-white placeholder-blue-200/40 rounded-sm focus:outline-none focus:ring-1 focus:ring-blue-400 focus:bg-white/10 transition-all shadow-inner disabled:opacity-50" 
               value={inputCompanyDb}
               onChange={e => setInputCompanyDb(e.target.value)}
               disabled={session.isConnected}
@@ -158,7 +171,7 @@ export default function App() {
             <input 
               type="text" 
               placeholder="Usuario" 
-              className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded shadow-sm disabled:opacity-50" 
+              className="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 text-white placeholder-blue-200/40 rounded-sm focus:outline-none focus:ring-1 focus:ring-blue-400 focus:bg-white/10 transition-all shadow-inner disabled:opacity-50" 
               value={inputUser}
               onChange={e => setInputUser(e.target.value)}
               disabled={session.isConnected}
@@ -166,7 +179,7 @@ export default function App() {
             <input 
               type="password" 
               placeholder="Password" 
-              className="w-full px-2 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded shadow-sm disabled:opacity-50" 
+              className="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 text-white placeholder-blue-200/40 rounded-sm focus:outline-none focus:ring-1 focus:ring-blue-400 focus:bg-white/10 transition-all shadow-inner disabled:opacity-50" 
               value={inputPass}
               onChange={e => setInputPass(e.target.value)}
               disabled={session.isConnected}
@@ -174,7 +187,7 @@ export default function App() {
             {!session.isConnected && (
               <button 
                 onClick={handleConnect}
-                className="w-full py-1.5 bg-slate-800 text-white text-xs font-semibold rounded hover:bg-slate-700 transition-colors shadow-md disabled:bg-slate-400"
+                className="w-full py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-sm hover:bg-blue-500 transition-colors shadow-md disabled:bg-white/5 disabled:text-blue-300/40"
                 disabled={!inputUrl || !inputUser || !inputPass}
               >
                 Conectar Sistema
@@ -182,13 +195,13 @@ export default function App() {
             )}
           </div>
 
-          <div className="h-px bg-slate-200"></div>
+          <div className="h-px bg-blue-800/50"></div>
 
           {/* Master Data Button */}
           <button 
             onClick={syncMasterData}
             disabled={!session.isConnected || masterData.isSyncing}
-            className="w-full flex items-center justify-center gap-2 py-2 border border-blue-200 bg-blue-50 text-blue-700 text-xs font-medium rounded hover:bg-blue-100 transition-colors shadow-sm disabled:opacity-50 disabled:bg-slate-50 disabled:text-slate-400 disabled:border-slate-200"
+            className="w-full flex items-center justify-center gap-2 py-2 border border-blue-400/20 bg-blue-900/40 text-blue-200 text-xs font-medium rounded-sm hover:bg-blue-800/60 transition-colors shadow-sm disabled:opacity-50 disabled:bg-white/5 disabled:text-blue-300/30 disabled:border-transparent"
           >
             <Database className={`w-3.5 h-3.5 ${masterData.isSyncing ? 'animate-spin' : ''}`} />
             Sincronizar Datos Maestros
@@ -196,9 +209,9 @@ export default function App() {
 
           {/* Active Filters */}
           <div className="space-y-2 pt-2">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Filtros de Búsqueda</label>
+            <label className="text-[10px] font-bold text-blue-300 uppercase tracking-widest">Filtros de Búsqueda</label>
             <select 
-              className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+              className="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 text-white rounded-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-white/5 disabled:text-blue-300/40 [&>option]:text-slate-900"
               value={filters.bplid}
               onChange={e => setFilters({ bplid: e.target.value })}
               disabled={!session.isConnected || masterData.bplids.length === 0}
@@ -214,33 +227,37 @@ export default function App() {
             
             <div className="flex gap-2">
               <div className="w-1/2">
-                <label className="text-[9px] font-bold text-slate-400 uppercase">F. Desde</label>
-                <input 
-                  type="text" 
-                  placeholder="DD-MM-YYYY"
-                  className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400" 
-                  value={filters.dateFrom}
-                  onChange={e => setFilters({ dateFrom: e.target.value })}
-                  disabled={!session.isConnected}
-                />
+                <label className="text-[9px] font-bold text-blue-300/80 uppercase">F. Desde</label>
+                <div className="relative">
+                  <input 
+                    type="text" 
+                    placeholder="DD/MM/YYYY"
+                    className="w-full px-2 py-1 text-xs font-mono bg-white/5 border border-white/10 text-white placeholder-blue-200/40 rounded-sm shadow-inner focus:outline-none focus:ring-1 focus:ring-blue-400 focus:bg-white/10 transition-all disabled:bg-white/5 disabled:text-blue-300/40" 
+                    value={filters.dateFrom}
+                    onChange={e => handleDateChange('dateFrom', e.target.value)}
+                    disabled={!session.isConnected}
+                  />
+                </div>
               </div>
               <div className="w-1/2">
-                <label className="text-[9px] font-bold text-slate-400 uppercase">F. Hasta</label>
-                <input 
-                  type="text" 
-                  placeholder="DD-MM-YYYY"
-                  className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400" 
-                  value={filters.dateTo}
-                  onChange={e => setFilters({ dateTo: e.target.value })}
-                  disabled={!session.isConnected}
-                />
+                <label className="text-[9px] font-bold text-blue-300/80 uppercase">F. Hasta</label>
+                <div className="relative">
+                  <input 
+                    type="text" 
+                    placeholder="DD/MM/YYYY"
+                    className="w-full px-2 py-1 text-xs font-mono bg-white/5 border border-white/10 text-white placeholder-blue-200/40 rounded-sm shadow-inner focus:outline-none focus:ring-1 focus:ring-blue-400 focus:bg-white/10 transition-all disabled:bg-white/5 disabled:text-blue-300/40" 
+                    value={filters.dateTo}
+                    onChange={e => handleDateChange('dateTo', e.target.value)}
+                    disabled={!session.isConnected}
+                  />
+                </div>
               </div>
             </div>
 
             <button 
               onClick={handleFetchOrders}
               disabled={!session.isConnected || isFetchingOrders}
-              className="w-full py-2 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700 transition-colors shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full py-2 bg-blue-600 text-white text-xs font-bold rounded-sm hover:bg-blue-500 transition-colors shadow-md disabled:opacity-50 disabled:bg-white/10 disabled:text-blue-200/50 flex items-center justify-center gap-2"
             >
               <Search className="w-3.5 h-3.5" />
               {isFetchingOrders ? 'Cargando...' : 'Consultar SAP'}
@@ -248,8 +265,8 @@ export default function App() {
           </div>
         </div>
         
-        <div className="p-4 bg-slate-50 border-t border-slate-200">
-          <div className="text-[10px] text-slate-400">
+        <div className="p-4 bg-blue-950 border-t border-blue-900">
+          <div className="text-[10px] text-blue-300/50 font-mono">
             {session.token ? `Sesión: ${session.token.substring(0, 10)}...` : 'Sin conexión SL'}
           </div>
         </div>
@@ -270,13 +287,13 @@ export default function App() {
         {/* Top Dashboard Bar */}
         <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-10">
           <div className="flex items-center gap-4 flex-1 min-w-0">
-            <span className={`text-xs font-semibold px-2 py-1 rounded-full whitespace-nowrap ${session.isConnected ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+            <span className={`text-xs font-semibold px-2 py-1 rounded-sm whitespace-nowrap ${session.isConnected ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
               Service Layer: {session.isConnected ? 'Online' : 'Offline'}
             </span>
             <div className="h-4 w-px bg-slate-300"></div>
             {session.isConnected ? (
               <div 
-                className="text-[10px] text-slate-500 font-mono truncate bg-slate-50 px-2 py-1 rounded border border-slate-200 max-w-2xl cursor-help"
+                className="text-[10px] text-slate-500 font-mono truncate bg-slate-50 px-2 py-1 rounded-sm border border-slate-200 max-w-2xl cursor-help"
                 title={`/Orders()?$select=DocEntry,DocNum,DocType,DocDate,DocDueDate,TaxDate,CardCode,DocTotal,DocCurrency,DocRate,Reference1,Comments,JournalMemo,BPLName,Cancelled,DocumentLines&$filter=DocDate ge '${filters.dateFrom}' and DocDate le '${filters.dateTo}'`}
               >
                 GET /Orders()?$select=DocEntry,DocNum...&$filter=DocDate ge '{filters.dateFrom}' and DocDate le '{filters.dateTo}'
@@ -300,7 +317,7 @@ export default function App() {
                   XLSX.utils.book_append_sheet(workbook, worksheet, "Plantilla");
                   XLSX.writeFile(workbook, "Plantilla_Cruce_OVs.xlsx");
                 }}
-                className="text-[10px] uppercase font-bold tracking-widest text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded transition-colors mr-2 border border-emerald-200 cursor-pointer"
+                className="text-[10px] uppercase font-bold tracking-widest text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-50 px-3 py-1.5 rounded-sm transition-colors mr-2 border border-slate-200 cursor-pointer shadow-sm"
               >
                 Descargar Plantilla Excel
               </button>
@@ -339,7 +356,7 @@ export default function App() {
                 }}
               />
               <button 
-                className="px-4 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded hover:bg-emerald-700 shadow-sm transition-all disabled:opacity-50 flex items-center gap-2 pointer-events-none"
+                className="px-4 py-1.5 bg-slate-800 text-white text-xs font-medium rounded-sm hover:bg-slate-900 shadow-sm transition-all disabled:opacity-50 flex items-center gap-2 pointer-events-none"
                 disabled={!session.isConnected}
               >
                 <UploadCloud className="w-3.5 h-3.5" />
@@ -347,7 +364,7 @@ export default function App() {
               </button>
             </div>
             <button 
-              className="px-4 py-1.5 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 shadow-sm transition-all disabled:opacity-50 flex items-center gap-2" 
+              className="px-4 py-1.5 bg-blue-800 text-white text-xs font-medium rounded-sm hover:bg-blue-900 shadow-sm transition-all disabled:opacity-50 flex items-center gap-2" 
               onClick={handleFetchOrders}
               disabled={!session.isConnected || isFetchingOrders}
             >
@@ -368,7 +385,7 @@ export default function App() {
                 <input 
                   type="text"
                   placeholder="Buscar por Número de OV / Documento SAP..."
-                  className="block w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all shadow-inner"
+                  className="block w-full pl-10 pr-3 py-2 border border-slate-200 rounded-sm bg-slate-50 text-sm placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-600 focus:bg-white transition-all shadow-inner"
                   value={filters.searchQuery}
                   onChange={e => setFilters({ searchQuery: e.target.value })}
                   onKeyDown={e => e.key === 'Enter' && handleFetchOrders()}
@@ -377,7 +394,7 @@ export default function App() {
               <button 
                 onClick={handleFetchOrders}
                 disabled={!session.isConnected || isFetchingOrders}
-                className="px-6 py-2 bg-slate-800 text-white rounded-lg text-sm font-bold hover:bg-slate-900 transition-all shadow-md flex items-center gap-2"
+                className="px-6 py-2 bg-blue-800 text-white rounded-sm text-sm font-bold hover:bg-blue-900 transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
               >
                 {isFetchingOrders ? (
                   <>
@@ -387,7 +404,7 @@ export default function App() {
                 ) : (
                   <>
                     <Search className="w-4 h-4" />
-                    Ejecutar Búsqueda en SAP
+                    Ejecutar Búsqueda
                   </>
                 )}
               </button>
@@ -395,12 +412,12 @@ export default function App() {
               <button 
                 onClick={() => regularizeProjects(sortedOrders)}
                 disabled={!session.isConnected || isFetchingOrders || isProcessingBatch}
-                className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-[11px] font-bold hover:bg-indigo-100 transition-all border border-indigo-200 flex items-center gap-2"
+                className="px-4 py-2 bg-slate-50 text-slate-700 rounded-sm text-[11px] font-bold hover:bg-slate-100 transition-all border border-slate-200 flex items-center gap-2 shadow-sm disabled:opacity-50"
                 title="Sincroniza proyectos de líneas a cabecera para mejorar la búsqueda"
               >
                 {isProcessingBatch && batchProgress ? (
                   <>
-                    <div className="w-3 h-3 border-2 border-indigo-500/30 border-t-indigo-600 rounded-full animate-spin" />
+                    <div className="w-3 h-3 border-2 border-slate-500/30 border-t-slate-600 rounded-full animate-spin" />
                     <span>Procesando... {batchProgress.current}/{batchProgress.total}</span>
                   </>
                 ) : (
@@ -418,21 +435,21 @@ export default function App() {
                 <input 
                   type="text" 
                   placeholder="RUT Cliente" 
-                  className="px-3 py-1.5 border border-slate-200 rounded-md bg-white focus:ring-1 focus:ring-blue-500 outline-none w-40"
+                  className="px-3 py-1.5 border border-slate-200 rounded-sm bg-white shadow-sm focus:ring-1 focus:ring-blue-600 outline-none w-40"
                   value={filters.rut}
                   onChange={e => setFilters({ rut: e.target.value })}
                 />
                 <input 
                   type="text" 
                   placeholder="Código Proyecto" 
-                  className="px-3 py-1.5 border border-slate-200 rounded-md bg-white focus:ring-1 focus:ring-blue-500 outline-none w-40"
+                  className="px-3 py-1.5 border border-slate-200 rounded-sm bg-white shadow-sm focus:ring-1 focus:ring-blue-600 outline-none w-40"
                   value={filters.project}
                   onChange={e => setFilters({ project: e.target.value })}
                 />
                 <input 
                   type="text" 
                   placeholder="Centro Costo" 
-                  className="px-3 py-1.5 border border-slate-200 rounded-md bg-white focus:ring-1 focus:ring-blue-500 outline-none w-40"
+                  className="px-3 py-1.5 border border-slate-200 rounded-sm bg-white shadow-sm focus:ring-1 focus:ring-blue-600 outline-none w-40"
                   value={filters.cc}
                   onChange={e => setFilters({ cc: e.target.value })}
                 />
@@ -446,20 +463,20 @@ export default function App() {
           
           {/* Data Quality Center */}
           {useStore(state => state.sheetAnomalies).length > 0 && (
-            <section className="bg-amber-50 border border-amber-200 rounded-lg shadow-sm p-4 animate-in fade-in slide-in-from-top-4 shrink-0">
+            <section className="bg-amber-50/50 border border-amber-200/60 rounded-sm shadow-sm p-4 animate-in fade-in slide-in-from-top-4 shrink-0">
               <div className="flex items-center gap-2 mb-3">
-                <AlertCircle className="w-5 h-5 text-amber-600" />
-                <h3 className="text-sm font-bold text-amber-800">Calidad de Datos: Anomalías Detectadas</h3>
-                <span className="bg-amber-200 text-amber-800 text-[10px] px-2 py-0.5 rounded-full font-bold ml-2">
+                <AlertCircle className="w-4 h-4 text-amber-600" />
+                <h3 className="text-xs font-bold text-amber-800 tracking-tight">Calidad de Datos: Anomalías Detectadas</h3>
+                <span className="bg-amber-100 text-amber-800 text-[9px] px-2 py-0.5 rounded-sm font-bold ml-2 border border-amber-200/50">
                   {useStore(state => state.sheetAnomalies).length} Casos
                 </span>
               </div>
-              <p className="text-xs text-amber-700 mb-3">
+              <p className="text-[11px] text-amber-700/80 mb-3">
                 Las siguientes Órdenes muestran incongruencias en la planilla operativa (Bd_Trabajada) y su facturación ha sido bloqueada.
               </p>
-              <div className="max-h-32 overflow-y-auto border border-amber-200 rounded">
-                <table className="w-full text-left text-[11px] bg-white">
-                  <thead className="bg-amber-100/50 sticky top-0 text-amber-800">
+              <div className="max-h-32 overflow-y-auto border border-amber-200/40 rounded-sm custom-scrollbar">
+                <table className="w-full text-left text-[11px] bg-white/50">
+                  <thead className="bg-amber-100/30 sticky top-0 text-amber-800/80">
                     <tr>
                       <th className="p-2 font-semibold">OV (DocNum)</th>
                       <th className="p-2 font-semibold">Ref. Sheets (Doc Venta)</th>
@@ -481,7 +498,7 @@ export default function App() {
           )}
 
           {/* Sales Orders Table */}
-          <section className="flex-[3] bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col overflow-hidden min-h-0 relative">
+          <section className="flex-[3] bg-white border border-slate-200 rounded-sm shadow-sm flex flex-col overflow-hidden min-h-0 relative">
             
             {/* Loading Overlay */}
             {isFetchingOrders && (
@@ -507,19 +524,19 @@ export default function App() {
                     <div className="flex items-center gap-2">
                       <button 
                         onClick={() => useStore.getState().invoiceBatchOrders()}
-                        className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 transition-colors bg-emerald-100 hover:bg-emerald-200 px-3 py-1 rounded border border-emerald-200 shadow-sm"
+                        className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 transition-colors bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-sm border border-emerald-200 shadow-sm"
                       >
                         Facturar Masivo
                       </button>
                       <button 
                         onClick={() => useStore.getState().closeBatchOrders()}
-                        className="text-[11px] font-bold text-red-700 hover:text-red-800 transition-colors bg-red-100 hover:bg-red-200 px-3 py-1 rounded border border-red-200 shadow-sm"
+                        className="text-[11px] font-bold text-red-700 hover:text-red-800 transition-colors bg-red-50 hover:bg-red-100 px-3 py-1 rounded-sm border border-red-200 shadow-sm"
                       >
                         Cerrar Masivo
                       </button>
                       <button 
                         onClick={() => toggleAllBatchSelection(false)}
-                        className="text-[11px] text-slate-500 hover:text-slate-700 transition-colors ml-2 underline underline-offset-2"
+                        className="text-[11px] text-slate-500 hover:text-slate-700 transition-colors ml-2 hover:underline underline-offset-2"
                       >
                         Desmarcar Todo
                       </button>
@@ -616,44 +633,44 @@ export default function App() {
                     return (
                       <React.Fragment key={o.docEntry}>
                         <tr 
-                          className={`cursor-pointer transition-colors ${isExpanded ? 'bg-blue-50/50' : 'hover:bg-slate-50/80'} ${isChecked ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'} ${o.sheetStatus === 'anomaly' ? 'bg-red-50 hover:bg-red-100 opacity-60 border-l-red-500' : ''} ${isClosed ? 'opacity-50 grayscale bg-slate-100 hover:bg-slate-200' : ''}`}
+                          className={`cursor-pointer transition-colors ${isExpanded ? 'bg-blue-50/50' : 'hover:bg-blue-50/30'} ${isChecked ? 'bg-blue-50/80 border-l-4 border-l-blue-600' : 'border-l-4 border-l-transparent'} ${o.sheetStatus === 'anomaly' ? 'bg-red-50/50 hover:bg-red-50 opacity-80 border-l-red-500' : ''} ${isClosed ? 'opacity-50 grayscale bg-slate-50/50 hover:bg-slate-100/50' : ''}`}
                           onClick={() => o.sheetStatus === 'anomaly' ? null : selectOrder(isExpanded ? null : o.docEntry)}
                         >
                           <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center gap-2 justify-center ml-2">
                               {o.sheetStatus !== 'anomaly' ? (
-                                <button className="text-slate-400 hover:text-slate-600 focus:outline-none" onClick={(e) => { e.stopPropagation(); selectOrder(isExpanded ? null : o.docEntry); }}>
+                                <button className="text-slate-400 hover:text-blue-600 focus:outline-none transition-colors" onClick={(e) => { e.stopPropagation(); selectOrder(isExpanded ? null : o.docEntry); }}>
                                   {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                                 </button>
                               ) : <div className="w-4 h-4"></div>}
                               <input 
                                 type="checkbox"
-                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:bg-slate-200 cursor-pointer"
+                                className="rounded-sm border-slate-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:bg-slate-100 cursor-pointer"
                                 checked={isChecked}
                                 onChange={() => toggleBatchSelection(o.docEntry)}
                                 disabled={isProcessingBatch || o.sheetStatus === 'anomaly' || o.sheetStatus === 'pending' || o.sheetStatus === 'pending_te4' || isClosed}
                               />
                             </div>
                           </td>
-                          <td className={`p-3 font-bold ${isExpanded ? 'text-blue-700' : 'text-slate-700'}`}>
+                          <td className={`p-3 font-bold tabular-nums ${isExpanded ? 'text-blue-800' : 'text-slate-800'}`}>
                             {o.docNum}
-                            <div className="text-[9px] font-mono font-normal text-slate-400 mt-0.5">{o.sheetRef || ''}</div>
+                            <div className="text-[9px] font-mono font-normal text-slate-400 mt-0.5 tabular-nums">{o.sheetRef || ''}</div>
                           </td>
-                          <td className="p-3 font-mono text-slate-400 text-[10px]">{o.docEntry}</td>
+                          <td className="p-3 font-mono text-slate-400 text-[10px] tabular-nums">{o.docEntry}</td>
                           <td className="p-3 text-[11px] truncate whitespace-nowrap">{o.cardCode} <span className="font-medium text-slate-500"></span></td>
-                          <td className="p-3 text-[11px] whitespace-nowrap">{formatDate(o.docDate)}</td>
+                          <td className="p-3 text-[11px] whitespace-nowrap tabular-nums">{formatDate(o.docDate)}</td>
                           <td className="p-3 text-center">
-                             {isClosed ? <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded border border-slate-300">Cerrado en SAP</span> : formatSheetStatus(o.sheetStatus)}
+                             {isClosed ? <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-sm border border-slate-200">Cerrado</span> : formatSheetStatus(o.sheetStatus)}
                           </td>
-                          <td className="p-3 text-[11px] text-slate-500 truncate max-w-[100px]">{o.documentLines[0]?.costCenter || "-"}</td>
+                          <td className="p-3 text-[11px] text-slate-500 truncate max-w-[100px] tabular-nums">{o.documentLines[0]?.costCenter || "-"}</td>
                           <td className="p-3 text-[11px] text-slate-600 truncate max-w-[80px] font-medium italic">{o.reference || "-"}</td>
-                          <td className="p-3 text-[11px] text-indigo-600 truncate max-w-[120px] font-bold">
+                          <td className="p-3 text-[11px] text-blue-700 truncate max-w-[120px] font-bold">
                             {o.project ? o.project : (
                               (() => {
                                 const lineProj = o.documentLines.find(l => l.project && l.project.trim() !== '')?.project;
                                 return lineProj ? (
                                   <span className="text-slate-400 font-normal italic flex items-center gap-1" title="Sugerencia basada en líneas">
-                                    <ArrowRight className="w-2.5 h-2.5 text-indigo-300" />
+                                    <ArrowRight className="w-2.5 h-2.5 text-blue-300" />
                                     {lineProj}
                                   </span>
                                 ) : "-";
@@ -661,7 +678,7 @@ export default function App() {
                             )}
                           </td>
                           <td className="p-3 text-[11px] text-center font-semibold text-slate-600">{o.currency}</td>
-                          <td className="p-3 text-right font-mono font-semibold">{formatCurrency(o.totalNet)}</td>
+                          <td className="p-3 text-right font-mono font-semibold tabular-nums tracking-tight">{formatCurrency(o.totalNet)}</td>
                           <td className="p-3 text-center relative" onClick={(e) => e.stopPropagation()}>
                             {!isClosed && (
                               <>
@@ -679,7 +696,7 @@ export default function App() {
                                       animate={{ opacity: 1, scale: 1, y: 0 }} 
                                       exit={{ opacity: 0, scale: 0.95, y: -5 }}
                                       transition={{ duration: 0.15 }}
-                                      className="absolute right-8 top-2 bg-white shadow-xl border border-slate-200 rounded-md py-1 z-50 w-36 flex flex-col items-stretch overflow-hidden origin-top-right text-left"
+                                      className="absolute right-8 top-2 bg-white shadow-xl border border-slate-200 rounded-sm py-1 z-50 w-36 flex flex-col items-stretch overflow-hidden origin-top-right text-left"
                                     >
                                       <button 
                                         className="px-4 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 text-left transition-colors"
