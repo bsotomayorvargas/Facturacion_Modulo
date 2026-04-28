@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { formatDate, parseDateToSAP } from './lib/utils';
-import { SalesOrder, Session, Filters, MasterData, ODataV2InvoicePayload, SheetAnomaly, SheetStatus, Subline } from './types';
+import { SalesOrder, Session, Filters, MasterData, ODataV2InvoicePayload, SheetAnomaly, SheetStatus, Subline, Invoice, CreditNotePayload, PurchaseInvoice, VendorPaymentPayload } from './types';
 
 // The requested raw JSON payload for /BusinessPlaces
 const RAW_BPL_RESPONSE = {
@@ -48,8 +48,15 @@ interface AppState {
 
   // Transactions
   orders: SalesOrder[];
+  invoices: Invoice[];
+  purchaseInvoices: PurchaseInvoice[];
+  activeTab: 'OVs' | 'Facturas' | 'Compras';
+  setActiveTab: (tab: 'OVs' | 'Facturas' | 'Compras') => void;
+  isFetchingInvoices: boolean;
+  isFetchingPurchases: boolean;
   selectedOrderEntry: number | null;
   selectedSublines: number[]; // stored by lineNum of the selected order
+  selectedPurchases: number[]; // stored docEntries for massive pay
   
   // Sheet Integration (Data Quality Center)
   sheetAnomalies: SheetAnomaly[];
@@ -68,12 +75,21 @@ interface AppState {
   selectOrder: (docEntry: number | null) => void;
   updateSalesOrder: (docEntry: number, updates: { comments?: string, reference?: string, project?: string, newLines?: Partial<Subline>[], updatedLines?: Partial<Subline>[] }) => Promise<void>;
   fetchOrders: () => Promise<void>;
+  fetchInvoices: () => Promise<void>;
   toggleSubline: (lineNum: number) => void;
   toggleAllSublines: (selectAll: boolean) => void;
+  
+  togglePurchaseSelection: (docEntry: number) => void;
+  toggleAllPurchaseSelection: (selectAll: boolean) => void;
   
   closeOrder: (docEntry: number) => Promise<void>;
   invoiceFullOrder: (docEntry: number) => Promise<void>;
   generateInvoice: () => Promise<void>;
+  generateCreditNote: (docEntry: number) => Promise<void>;
+  
+  fetchPurchaseInvoices: () => Promise<void>;
+  paySelectedInvoices: (transferAccount: string, reference: string) => Promise<void>;
+  linkInvoiceToOrder: (invoiceDocEntry: number, orderDocNum: number) => Promise<void>;
 
   // Computed Simulators (exposed as getters/functions or just derived in React component for better state management, 
   // but keeping simple helper here for simulation parsing)
@@ -89,6 +105,18 @@ export const useStore = create<AppState>((set, get) => ({
     isConnected: false,
     bplid: null,
   },
+
+  activeTab: 'OVs',
+  setActiveTab: (tab) => set({ activeTab: tab }),
+
+  orders: [],
+  invoices: [],
+  purchaseInvoices: [],
+  isFetchingInvoices: false,
+  isFetchingPurchases: false,
+  selectedOrderEntry: null,
+  selectedSublines: [],
+  selectedPurchases: [],
 
   connect: async (url, companyDb, user, pass) => {
     // Real POST to Service Layer Login via proxy
@@ -112,6 +140,9 @@ export const useStore = create<AppState>((set, get) => ({
     
     const data = await response.json();
     set({ session: { url, companyDb, user, token: data.SessionId, isConnected: true, bplid: "1" } }); // Default BPLId to "1" until synched
+    
+    // Sincronizar automáticamente los datos maestros al iniciar sesión
+    get().syncMasterData().catch(console.error);
   },
 
   disconnect: () => {
@@ -185,7 +216,8 @@ export const useStore = create<AppState>((set, get) => ({
     cc: "",
     dateFrom: formatDate(new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0]),
     dateTo: formatDate(new Date().toISOString().split('T')[0]),
-    searchQuery: ""
+    searchQuery: "",
+    daysToDue: 3
   },
 
   setFilters: (newFilters) => set((state) => {
@@ -198,7 +230,8 @@ export const useStore = create<AppState>((set, get) => ({
     return { 
       filters: updatedFilters,
       selectedOrderEntry: resetSelection ? null : state.selectedOrderEntry,
-      selectedSublines: resetSelection ? [] : state.selectedSublines
+      selectedSublines: resetSelection ? [] : state.selectedSublines,
+      selectedPurchases: resetSelection ? [] : state.selectedPurchases
     };
   }),
 
@@ -212,6 +245,10 @@ export const useStore = create<AppState>((set, get) => ({
     const sapDateTo = parseDateToSAP(dateTo);
     
     let filterClauses = [`DocDate ge '${sapDateFrom}' and DocDate le '${sapDateTo}'` || ""];
+    
+    if (bplid) {
+      filterClauses.push(`BPL_IDAssignedToInvoice eq ${bplid}`);
+    }
     
     if (rut) {
       filterClauses.push(`contains(CardCode, '${rut}')`);
@@ -354,9 +391,7 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  orders: MOCK_ORDERS,
-  selectedOrderEntry: null,
-  selectedSublines: [],
+
   sheetAnomalies: [],
 
   syncSheetsData: (parsedData: any[]) => set((state) => {
@@ -1076,5 +1111,451 @@ export const useStore = create<AppState>((set, get) => ({
     };
     
     return payload;
+  },
+
+  fetchInvoices: async () => {
+    const { session, filters, masterData } = get();
+    const { dateFrom, dateTo, rut, searchQuery, bplid, project } = filters;
+    
+    // Parse dates to SAP format YYYY-MM-DD
+    const sapDateFrom = parseDateToSAP(dateFrom);
+    const sapDateTo = parseDateToSAP(dateTo);
+    
+    let filterClauses = [`DocDate ge '${sapDateFrom}' and DocDate le '${sapDateTo}'` || ""];
+    
+    if (bplid) {
+      filterClauses.push(`BPL_IDAssignedToInvoice eq ${bplid}`);
+    }
+    
+    if (rut) {
+      filterClauses.push(`contains(CardCode, '${rut}')`);
+    }
+    
+    if (project) {
+      filterClauses.push(`Project eq '${project}'`);
+    }
+
+    if (searchQuery) {
+      if (!isNaN(Number(searchQuery))) {
+        filterClauses.push(`DocNum eq ${searchQuery}`);
+      } else {
+        filterClauses.push(`(contains(Reference1, '${searchQuery}') or contains(Project, '${searchQuery}'))`);
+      }
+    }
+
+    const filter = filterClauses.filter(Boolean).join(' and ');
+    
+    const initialOdataQuery = `Invoices()?$select=DocEntry,DocNum,DocType,DocDate,DocDueDate,TaxDate,CardCode,DocTotal,DocCurrency,DocRate,Reference1,Comments,Project,JournalMemo,BPLName,Cancelled,DocumentStatus,DocumentLines,U_EXX_FE_DESERR,Indicator&$filter=${filter}`;
+    console.log(`[Service Layer Request]: Querying SAP Facturas with filter: ${filter}`);
+    
+    // Reset selection before extraction
+    set({ selectedOrderEntry: null, selectedSublines: [], isFetchingInvoices: true });
+
+    try {
+      if (!session.url || !session.token) throw new Error("No hay sesi\u00f3n para descargar transacciones");
+
+      let allSapInvoices: any[] = [];
+      let currentPath = initialOdataQuery;
+      let hasNextPage = true;
+
+      // Loop to fetch paginated results using @odata.nextLink
+      while (hasNextPage) {
+        const cleanPath = currentPath.startsWith('/') ? currentPath.substring(1) : currentPath;
+        const baseUrl = session.url.endsWith('/') ? session.url.slice(0, -1) : session.url;
+        const targetUrl = `${baseUrl}/${cleanPath}`;
+
+        const response = await fetch('/api/sap/proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            method: 'GET',
+            url: targetUrl,
+            token: session.token
+          })
+        });
+
+        if (!response.ok) {
+          let errValue = "Error descargando Facturas";
+          try { const err = await response.json(); errValue = err?.error?.message?.value || JSON.stringify(err); } catch(e) { }
+          throw new Error(errValue);
+        }
+        
+        const data = await response.json();
+        
+        if (data.value && Array.isArray(data.value)) {
+          allSapInvoices = allSapInvoices.concat(data.value);
+        }
+
+        if (data['@odata.nextLink']) {
+          currentPath = data['@odata.nextLink'];
+        } else {
+          hasNextPage = false;
+        }
+      }
+
+      console.log(`[SAP API Response] Extraction Complete. Total Records: ${allSapInvoices.length}`);
+
+      const bplDict = masterData.bplids.reduce((acc, curr) => {
+        acc[curr.name] = curr.id;
+        return acc;
+      }, {} as Record<string, string>);
+
+      const mappedInvoices: Invoice[] = allSapInvoices.map((sapInvoice: any) => ({
+        docEntry: sapInvoice.DocEntry,
+        docNum: sapInvoice.DocNum,
+        cardCode: sapInvoice.CardCode,
+        cardName: sapInvoice.CardName || sapInvoice.CardCode, 
+        docDate: sapInvoice.DocDate,
+        docDueDate: sapInvoice.DocDueDate,
+        bplid: bplDict[sapInvoice.BPLName] || "1",
+        currency: sapInvoice.DocCurrency,
+        docRate: sapInvoice.DocRate,
+        isCancelled: sapInvoice.Cancelled === "tYES" || sapInvoice.Cancelled === "Y",
+        documentStatus: sapInvoice.DocumentStatus,
+        comments: sapInvoice.Comments,
+        reference: sapInvoice.Reference1,
+        project: sapInvoice.Project,
+        siiStatus: sapInvoice.U_EXX_FE_DESERR || 'No Enviado',
+        indicator: sapInvoice.Indicator || '',
+        u_Orden_Venta: sapInvoice.U_Orden_Venta,
+
+        totalNet: sapInvoice.DocTotal,
+        documentLines: (sapInvoice.DocumentLines || []).map((line: any) => ({
+          lineNum: line.LineNum,
+          itemCode: line.ItemCode,
+          dscription: line.ItemDescription,
+          quantity: line.Quantity,
+          price: line.Price,
+          discountPercent: line.DiscountPercent,
+          taxCode: line.TaxCode,
+          project: line.ProjectCode,
+          costCenter: line.CostingCode5,
+          currency: line.Currency,
+          rate: line.Rate,
+          lineStatus: line.LineStatus,
+          baseType: line.BaseType,
+          baseEntry: line.BaseEntry,
+          baseRef: line.BaseRef
+        }))
+      }));
+
+      // In case we want to sort
+      mappedInvoices.sort((a, b) => b.docNum - a.docNum);
+
+      set({ invoices: mappedInvoices, isFetchingInvoices: false });
+    } catch(error: any) {
+      console.error(error);
+      alert(`Error extrayendo facturas: ${error.message}`);
+      set({ isFetchingInvoices: false });
+    }
+  },
+
+  generateCreditNote: async (docEntry: number) => {
+    try {
+      const { session, invoices } = get();
+      if (!session.url || !session.token) throw new Error("No hay sesi\u00f3n para interactuar con SAP");
+
+      const invoice = invoices.find(inv => inv.docEntry === docEntry);
+      if (!invoice) throw new Error("Factura no encontrada en el estado");
+
+      const payload: CreditNotePayload = {
+        DocType: "dDocument_Items",
+        DocDate: parseDateToSAP(formatDate(new Date().toISOString().split('T')[0])),
+        DocDueDate: parseDateToSAP(formatDate(new Date().toISOString().split('T')[0])),
+        TaxDate: parseDateToSAP(formatDate(new Date().toISOString().split('T')[0])),
+        DocCurrency: invoice.currency,
+        CardCode: invoice.cardCode,
+        Comments: `Nota de Crédito basada en Factura Nro: ${invoice.docNum}`,
+        Indicator: "61", // Typically 61 is Note of Credit in Chilean Localization, adjust if needed
+        BPL_IDAssignedToInvoice: parseInt(invoice.bplid, 10),
+        DocumentLines: invoice.documentLines.map(line => ({
+          BaseType: 13,
+          BaseEntry: invoice.docEntry,
+          BaseLine: line.lineNum,
+          Quantity: line.quantity
+        }))
+      };
+
+      console.log(`[POST /CreditNotes Payload]:`, payload);
+
+      const response = await fetch('/api/sap/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          method: 'POST',
+          url: `${session.url}/CreditNotes`,
+          body: payload,
+          token: session.token
+        })
+      });
+
+      if (!response.ok) {
+        let errValue = "Error generando Nota de Crédito";
+        try { const err = await response.json(); errValue = err?.error?.message?.value || JSON.stringify(err); } catch(e) { }
+        throw new Error(errValue);
+      }
+
+      const responseData = await response.json();
+      console.log("Nota de Crédito creada:", responseData);
+      alert(`¡Nota de Crédito generada exitosamente! DocNum NC: ${responseData.DocNum}`);
+      
+      // Refresh Invoices to show potential updates (e.g. invoice closed)
+      await get().fetchInvoices();
+    } catch (error: any) {
+      console.error("Error Credit Note:", error);
+      alert(error.message);
+    }
+  },
+
+  togglePurchaseSelection: (docEntry: number) => set((state) => {
+    const isSelected = state.selectedPurchases.includes(docEntry);
+    return {
+      selectedPurchases: isSelected
+        ? state.selectedPurchases.filter(e => e !== docEntry)
+        : [...state.selectedPurchases, docEntry]
+    };
+  }),
+
+  toggleAllPurchaseSelection: (selectAll: boolean) => set((state) => {
+    if (!selectAll) return { selectedPurchases: [] };
+    const visiblePurchases = state.purchaseInvoices.filter(o => o.documentStatus !== 'bost_Close' && o.documentStatus !== 'bost_Cancel');
+    return { selectedPurchases: visiblePurchases.map(o => o.docEntry) };
+  }),
+
+  fetchPurchaseInvoices: async () => {
+    const { session, filters, masterData } = get();
+    const { dateFrom, dateTo, rut, searchQuery, bplid, daysToDue } = filters;
+    
+    // Parse dates to SAP format YYYY-MM-DD
+    const sapDateFrom = parseDateToSAP(dateFrom);
+    const sapDateTo = parseDateToSAP(dateTo);
+    
+    // Base filter: Open Purchase Invoices
+    let filterClauses = [`DocumentStatus eq 'bost_Open'`];
+    
+    if (bplid) {
+      filterClauses.push(`BPL_IDAssignedToInvoice eq ${bplid}`);
+    }
+    
+    if (rut) {
+      filterClauses.push(`contains(CardCode, '${rut}')`);
+    }
+
+    if (daysToDue !== '' && daysToDue !== undefined) {
+       // Filter by DocDueDate <= today + daysToDue
+       const targetDate = new Date();
+       targetDate.setDate(targetDate.getDate() + daysToDue);
+       const formattedTargetDate = targetDate.toISOString().split('T')[0];
+       filterClauses.push(`DocDueDate le '${formattedTargetDate}'`);
+    } else {
+       // Si no hay filtro de días, usamos el dateFrom y dateTo sobre la fecha contable
+       filterClauses.push(`DocDate ge '${sapDateFrom}' and DocDate le '${sapDateTo}'`);
+    }
+
+    if (searchQuery) {
+      if (!isNaN(Number(searchQuery))) {
+        filterClauses.push(`DocNum eq ${searchQuery}`);
+      } else {
+        filterClauses.push(`(contains(Reference1, '${searchQuery}') or contains(CardName, '${searchQuery}'))`);
+      }
+    }
+
+    const filter = filterClauses.filter(Boolean).join(' and ');
+    
+    // OData Query for OPCH (Purchase Invoices)
+    const initialOdataQuery = `PurchaseInvoices?$select=DocEntry,DocNum,CardCode,CardName,DocDate,DocDueDate,DocCurrency,DocTotal,PaidToDate,DocumentStatus,Project,Reference1,BPLName&$filter=${filter}`;
+    
+    set({ isFetchingPurchases: true, selectedPurchases: [] });
+
+    try {
+      if (!session.url || !session.token) throw new Error("No hay sesi\u00f3n para descargar transacciones");
+
+      let allSapPurchases: any[] = [];
+      let currentPath = initialOdataQuery;
+      let hasNextPage = true;
+
+      while (hasNextPage) {
+        const cleanPath = currentPath.startsWith('/') ? currentPath.substring(1) : currentPath;
+        const baseUrl = session.url.endsWith('/') ? session.url.slice(0, -1) : session.url;
+        const targetUrl = `${baseUrl}/${cleanPath}`;
+
+        const response = await fetch('/api/sap/proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            method: 'GET',
+            url: targetUrl,
+            token: session.token
+          })
+        });
+
+        if (!response.ok) {
+          let errValue = "Error descargando Facturas de Compra";
+          try { const err = await response.json(); errValue = err?.error?.message?.value || JSON.stringify(err); } catch(e) { }
+          throw new Error(errValue);
+        }
+        
+        const data = await response.json();
+        
+        if (data.value && Array.isArray(data.value)) {
+          allSapPurchases = allSapPurchases.concat(data.value);
+        }
+
+        if (data['@odata.nextLink']) {
+          currentPath = data['@odata.nextLink'];
+        } else {
+          hasNextPage = false;
+        }
+      }
+
+      const bplDict = masterData.bplids.reduce((acc, curr) => {
+        acc[curr.name] = curr.id;
+        return acc;
+      }, {} as Record<string, string>);
+
+      const mappedPurchases: PurchaseInvoice[] = allSapPurchases.map((sapInv: any) => ({
+        docEntry: sapInv.DocEntry,
+        docNum: sapInv.DocNum,
+        cardCode: sapInv.CardCode,
+        cardName: sapInv.CardName || sapInv.CardCode, 
+        docDate: sapInv.DocDate,
+        docDueDate: sapInv.DocDueDate,
+        currency: sapInv.DocCurrency,
+        docTotal: sapInv.DocTotal,
+        paidToDate: sapInv.PaidToDate,
+        documentStatus: sapInv.DocumentStatus,
+        project: sapInv.Project,
+        reference: sapInv.Reference1,
+        bplid: bplDict[sapInv.BPLName] || "1", 
+      }));
+
+      set({ purchaseInvoices: mappedPurchases, isFetchingPurchases: false });
+    } catch(error: any) {
+      console.error(error);
+      alert(`Error extrayendo compras: ${error.message}`);
+      set({ isFetchingPurchases: false });
+    }
+  },
+
+  linkInvoiceToOrder: async (invoiceDocEntry: number, orderDocNum: number) => {
+    const { session } = get();
+    if (!session.url || !session.token) {
+      alert("No hay sesión activa.");
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/sap/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          method: 'PATCH',
+          url: `${session.url}/Invoices(${invoiceDocEntry})`,
+          body: { U_Orden_Venta: String(orderDocNum) },
+          token: session.token
+        })
+      });
+
+      if (!response.ok) {
+        let errValue = "Error al vincular OV en SAP";
+        try { const err = await response.json(); errValue = err?.error?.message?.value || JSON.stringify(err); } catch(e) { }
+        throw new Error(errValue);
+      }
+
+      set((state) => ({
+        invoices: state.invoices.map(inv => inv.docEntry === invoiceDocEntry ? { ...inv, u_Orden_Venta: String(orderDocNum) } : inv)
+      }));
+      
+      alert("¡Vinculación Exitosa! La factura ahora hace referencia a la Orden de Venta.");
+    } catch(error: any) {
+      console.error(error);
+      alert(`Fallo al intentar vincular la factura: ${error.message}`);
+    }
+  },
+
+  paySelectedInvoices: async (transferAccount: string, reference: string) => {
+    const { session, selectedPurchases, purchaseInvoices, filters } = get();
+    if (selectedPurchases.length === 0) return;
+    if (!session.url || !session.token) {
+      alert("No hay sesión activa para pagar.");
+      return;
+    }
+    
+    // Validate we have a transfer account
+    if (!transferAccount) {
+      alert("Debe proveer una cuenta de transferencia válida.");
+      return;
+    }
+
+    try {
+      const today = parseDateToSAP(formatDate(new Date().toISOString().split('T')[0]));
+      
+      // We will group by Provider to generate one payment per provider, OR one payment per invoice depending on rules.
+      // Usually SAP allows grouping invoices of the SAME provider in ONE payment document.
+      const selectedDocs = purchaseInvoices.filter(p => selectedPurchases.includes(p.docEntry));
+      
+      const providerGroups = selectedDocs.reduce((acc, curr) => {
+         if (!acc[curr.cardCode]) acc[curr.cardCode] = [];
+         acc[curr.cardCode].push(curr);
+         return acc;
+      }, {} as Record<string, PurchaseInvoice[]>);
+
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (const cardCode in providerGroups) {
+         const invoicesToPay = providerGroups[cardCode];
+         const transferSum = invoicesToPay.reduce((sum, inv) => sum + (inv.docTotal - inv.paidToDate), 0);
+
+         const payload: VendorPaymentPayload = {
+            DocType: "rSupplier",
+            HandWritten: "tNO",
+            DocDate: today,
+            TransferDate: today,
+            CardCode: cardCode,
+            BPLID: parseInt(filters.bplid, 10),
+            TransferAccount: transferAccount,
+            TransferSum: transferSum,
+            Reference1: reference || "Nómina Portal",
+            PaymentInvoices: invoicesToPay.map(inv => ({
+               DocEntry: inv.docEntry,
+               SumApplied: inv.docTotal - inv.paidToDate,
+               InvoiceType: "it_PurchaseInvoice"
+            }))
+         };
+
+         console.log("Creating VendorPayment:", payload);
+
+         const response = await fetch('/api/sap/proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              method: 'POST',
+              url: `${session.url}/VendorPayments`,
+              body: payload,
+              token: session.token
+            })
+         });
+
+         if (!response.ok) {
+           errorCount++;
+           console.error("Failed Payment Response", await response.text());
+         } else {
+           successCount++;
+         }
+      }
+
+      if (errorCount > 0) {
+        alert(`Pagos procesados con ${errorCount} errores y ${successCount} aciertos. Revise consola.`);
+      } else {
+        alert(`¡Se generaron ${successCount} Pagos Efectuados correctamente en SAP!`);
+      }
+      
+      // Refresh list
+      await get().fetchPurchaseInvoices();
+      
+    } catch(e: any) {
+       alert("Error general procesando pago masivo: " + e.message);
+    }
   }
 }));

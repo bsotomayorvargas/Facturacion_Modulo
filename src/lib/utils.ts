@@ -17,16 +17,16 @@ export const formatCurrency = (value: number) => {
 export const formatDate = (dateString: string) => {
   if (!dateString) return "-";
   
-  // If already DD-MM-YYYY or DD/MM/YYYY, enforce slashes
+  // If already DD-MM-YYYY or DD/MM/YYYY, enforce hyphens
   if (/^\d{2}[-/]\d{2}[-/]\d{4}/.test(dateString)) {
-    return dateString.replace(/-/g, '/');
+    return dateString.replace(/\//g, '-');
   }
 
   // Handle SAP YYYY-MM-DD
   const dateParts = dateString.split('T')[0].split('-');
   if (dateParts.length === 3 && dateParts[0].length === 4) {
     const [y, m, d] = dateParts;
-    return `${d}/${m}/${y}`;
+    return `${d}-${m}-${y}`;
   }
 
   const date = new Date(dateString);
@@ -36,7 +36,7 @@ export const formatDate = (dateString: string) => {
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const y = date.getFullYear();
   
-  return `${d}/${m}/${y}`;
+  return `${d}-${m}-${y}`;
 };
 
 export const parseDateToSAP = (displayDate: string) => {

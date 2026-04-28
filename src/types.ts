@@ -21,6 +21,7 @@ export interface Filters {
   dateFrom: string; // Add date filtering YYYY-MM-DD
   dateTo: string;
   searchQuery: string;
+  daysToDue?: number | ''; // Nuevo filtro para facturas de compras
 }
 
 // Representing the flat fact table subline architecture
@@ -37,6 +38,9 @@ export interface Subline {
   currency: string; // Currency
   rate?: number; // Line Rate
   lineStatus: string; // "bost_Open" or "bost_Close"
+  baseType?: number;
+  baseEntry?: number;
+  baseRef?: string;
 }
 
 export type SheetStatus = 'ready_anticipo' | 'ready_cierre' | 'ready_100' | 'anomaly' | 'pending' | 'pending_te4';
@@ -101,7 +105,6 @@ export interface ODataV2InvoicePayload {
   }>;
 }
 
-// Service Layer BusinessPlaces (Sucursales) Payload
 export interface SLBusinessPlace {
   BPLID: number;
   BPLName: string;
@@ -112,3 +115,82 @@ export interface SLBusinessPlace {
 export interface SLBusinessPlacesResponse {
   value: SLBusinessPlace[];
 }
+
+// Representing the aggregated/grouped Header for Invoice
+export interface Invoice {
+  docEntry: number;
+  docNum: number;
+  cardCode: string;
+  cardName: string;
+  docDate: string;
+  docDueDate: string;
+  bplid: string;
+  currency: string;
+  docRate?: number;
+  documentLines: Subline[];
+  totalNet: number;
+  isCancelled: boolean;
+  documentStatus: string;
+  comments?: string;
+  reference?: string;
+  project?: string;
+  siiStatus: string; // Maps to U_EXX_FE_DESERR
+  indicator: string; // Document Indicator e.g. "33"
+  u_Orden_Venta?: string; // U_Orden_Venta UDF
+}
+
+// Payload target for Credit Notes
+export interface CreditNotePayload {
+  DocType: string;
+  DocDate: string;
+  DocDueDate: string;
+  TaxDate: string;
+  DocCurrency: string;
+  CardCode: string;
+  Comments: string;
+  Indicator: string;
+  BPL_IDAssignedToInvoice: number;
+  DocumentLines: Array<{
+    BaseType: number;      // 13 for Invoice
+    BaseEntry: number;     // Mapping source Invoice DocEntry
+    BaseLine: number;      // Invoice LineNum
+    Quantity: number;
+  }>;
+}
+
+// Representing the aggregated/grouped Header for Purchase Invoices (Proveedores)
+export interface PurchaseInvoice {
+  docEntry: number;
+  docNum: number;
+  cardCode: string;
+  cardName: string;
+  docDate: string;
+  docDueDate: string;
+  bplid: string;
+  currency: string;
+  docTotal: number;
+  paidToDate: number; // For knowing if there's an open balance
+  documentStatus: string;
+  project?: string;
+  reference?: string;
+}
+
+// Payload for Outgoing Payments (Pagos Efectuados a Proveedores)
+export interface VendorPaymentPayload {
+  DocType: "rSupplier";
+  HandWritten: "tNO";
+  DocDate: string;
+  CardCode: string;
+  BPLID: number;
+  TransferAccount: string; // The GL Account / Bank Account code to pay from
+  TransferSum: number;
+  TransferDate: string;
+  Reference1: string;
+  JournalRemarks?: string;
+  PaymentInvoices: Array<{
+    DocEntry: number; // DocEntry of the Purchase Invoice
+    SumApplied: number;
+    InvoiceType: "it_PurchaseInvoice";
+  }>;
+}
+
