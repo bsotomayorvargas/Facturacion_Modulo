@@ -11,11 +11,45 @@ async function startServer() {
 
   app.use(express.json());
 
+  // === AUTHENTICATION ENDPOINT ===
+  app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body || {};
+    const VALID_USER = process.env.APP_USER || 'fluxadmins';
+    const VALID_PASS = process.env.APP_PASSWORD || 'FluxCopec26!!';
+    const SECRET_TOKEN = process.env.APP_SECRET || 'gauss-copec-secure-token-2026';
+
+    if (username === VALID_USER && password === VALID_PASS) {
+      res.setHeader('Set-Cookie', `app_token=${SECRET_TOKEN}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`);
+      return res.status(200).json({ success: true });
+    }
+    return res.status(401).json({ error: 'Credenciales inválidas' });
+  });
+
+  // Helper to parse cookies
+  const parseCookies = (req: express.Request) => {
+    const list: Record<string, string> = {};
+    const rc = req.headers.cookie;
+    if (rc) {
+      rc.split(';').forEach((cookie) => {
+        const parts = cookie.split('=');
+        list[parts.shift()?.trim() || ''] = decodeURI(parts.join('='));
+      });
+    }
+    return list;
+  };
+
   // === SAP B1 SERVICE LAYER PROXY ===
   // This proxy allows the frontend to hit SAP B1 endpoints without being 
   // blocked by CORS restrictions or Self-Signed SSL issues in the browser.
   app.post('/api/sap/proxy', async (req, res) => {
     try {
+      // Security Wall
+      const SECRET_TOKEN = process.env.APP_SECRET || 'gauss-copec-secure-token-2026';
+      const cookies = parseCookies(req);
+      if (cookies.app_token !== SECRET_TOKEN) {
+        return res.status(401).json({ error: 'Acceso denegado. Autenticación de aplicación requerida.' });
+      }
+
       const { method, url, body, token } = req.body;
       
       const headers: Record<string, string> = {

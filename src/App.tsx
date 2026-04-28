@@ -22,7 +22,13 @@ const formatSheetStatus = (status?: string) => {
   }
 };
 
+import { AppLogin } from './components/AppLogin';
+
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem('app_auth') === 'true';
+  });
+
   const { 
     session, filters, masterData, orders, selectedOrderEntry, selectedSublines,
     setFilters, selectOrder, toggleSubline, toggleAllSublines, connect, disconnect,
@@ -39,6 +45,16 @@ export default function App() {
   const [editingOrder, setEditingOrder] = useState<number | null>(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
+  if (!isAuthenticated) {
+    return (
+      <AppLogin 
+        onLogin={() => {
+          localStorage.setItem('app_auth', 'true');
+          setIsAuthenticated(true);
+        }} 
+      />
+    );
+  }
 
 
   // Derived state: filtered orders
@@ -121,8 +137,8 @@ export default function App() {
             <img src="/LogoCopecFlux.svg" alt="Copec Flux Logo" className="h-10 w-auto" />
           </div>
           <div className="w-1/2 text-center border-l border-blue-800 pl-2">
-            <h1 className="text-white font-bold text-sm uppercase tracking-wider leading-tight">
-              Gestor de<br />Contratos
+            <h1 className="text-white font-bold text-[11px] uppercase tracking-wider leading-tight">
+              Flux AyF<br />Platform
             </h1>
           </div>
         </div>
