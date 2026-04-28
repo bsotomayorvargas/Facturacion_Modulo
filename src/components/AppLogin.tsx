@@ -239,10 +239,6 @@ export function AppLogin({ onLogin }: AppLoginProps) {
             <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full"></div>
             <img src="/LogoCopecFlux.svg" alt="Copec Flux" className="h-14 relative z-10 drop-shadow-2xl brightness-110" />
           </div>
-          <div className="text-center space-y-1">
-            <h1 className="text-2xl font-bold text-white tracking-tight">Flux AyF Platform</h1>
-            <p className="text-sm text-blue-200/60 font-medium">Autenticación requerida para administradores</p>
-          </div>
         </motion.div>
 
         <motion.div
@@ -257,9 +253,6 @@ export function AppLogin({ onLogin }: AppLoginProps) {
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-blue-200/80 uppercase tracking-wider ml-1">
-                    Usuario
-                  </label>
                   <div className="relative group">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                       <User className="h-4 w-4 text-blue-300/50 group-focus-within:text-blue-400 transition-colors" />
@@ -279,9 +272,6 @@ export function AppLogin({ onLogin }: AppLoginProps) {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-blue-200/80 uppercase tracking-wider ml-1">
-                    Contraseña
-                  </label>
                   <div className="relative group">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                       <Lock className="h-4 w-4 text-blue-300/50 group-focus-within:text-blue-400 transition-colors" />
@@ -333,11 +323,6 @@ export function AppLogin({ onLogin }: AppLoginProps) {
                 )}
               </button>
             </form>
-          </div>
-          
-          <div className="mt-8 text-center flex items-center justify-center gap-2 text-blue-200/40 text-[10px] uppercase tracking-widest font-semibold">
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Plataforma Segura • Copec Flux</span>
           </div>
         </motion.div>
       </div>
