@@ -1,16 +1,95 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Lock, User, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Lock, User, ArrowRight, ShieldCheck, Settings2 } from 'lucide-react';
 
 interface AppLoginProps {
   onLogin: () => void;
 }
+
+// --- FLUID BACKGROUND GENERATOR CONFIGURATION ---
+const INITIAL_FLUID_CONFIG = {
+  containerOpacity: 0.9,
+  noiseOpacity: 0.04,
+  noiseFrequency: "0.85",
+  baseGradient: "from-[#002870]/60 via-[#001438] to-[#001438]",
+  layers: [
+    {
+      id: "blue-main",
+      active: true,
+      color: "rgba(37,99,235,0.4)",
+      size: "120vw",
+      initialPos: { top: "-30%", left: "-10%" },
+      animX: [0, 200, -100, 0],
+      animY: [0, -150, 100, 0],
+      duration: 25,
+      delay: 0,
+    },
+    {
+      id: "blue-secondary",
+      active: true,
+      color: "rgba(59,130,246,0.3)",
+      size: "100vw",
+      initialPos: { bottom: "-20%", right: "-20%" },
+      animX: [0, -150, 200, 0],
+      animY: [0, 150, -150, 0],
+      duration: 28,
+      delay: 1,
+    },
+    {
+      id: "cyan-core",
+      active: true,
+      color: "rgba(14,165,233,0.2)",
+      size: "80vw",
+      initialPos: { top: "20%", left: "20%" },
+      animX: [0, 150, -150, 0],
+      animY: [0, 100, -200, 0],
+      duration: 22,
+      delay: 2,
+    },
+    {
+      id: "deep-blue",
+      active: true,
+      color: "rgba(0,40,112,0.6)",
+      size: "130vw",
+      initialPos: { bottom: "-30%", left: "-10%" },
+      animX: [0, -200, 100, 0],
+      animY: [0, -100, 200, 0],
+      duration: 30,
+      delay: 3,
+    },
+    {
+      id: "purple-experiment",
+      active: false,
+      color: "rgba(139,92,246,0.15)",
+      size: "90vw",
+      initialPos: { top: "30%", left: "30%" },
+      animX: [0, 100, -100, 0],
+      animY: [0, 100, -100, 0],
+      duration: 35,
+      delay: 0,
+    },
+    {
+      id: "emerald-highlight",
+      active: false,
+      color: "rgba(16,185,129,0.15)",
+      size: "70vw",
+      initialPos: { top: "10%", right: "20%" },
+      animX: [0, -150, 150, 0],
+      animY: [0, -50, 100, 0],
+      duration: 20,
+      delay: 4,
+    }
+  ]
+};
 
 export function AppLogin({ onLogin }: AppLoginProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  
+  const [config, setConfig] = useState(INITIAL_FLUID_CONFIG);
+  const [showGenerator, setShowGenerator] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,11 +120,109 @@ export function AppLogin({ onLogin }: AppLoginProps) {
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-[#001438] relative overflow-hidden">
+      
+      {/* Botón del Generador */}
+      <button 
+        onClick={() => setShowGenerator(!showGenerator)}
+        className="absolute top-6 left-6 z-[60] text-blue-200/50 hover:text-white bg-white/5 hover:bg-white/10 p-2.5 rounded-xl backdrop-blur-md border border-white/10 transition-all shadow-lg"
+        title="Generador de Fluidos"
+      >
+        <Settings2 className="w-5 h-5" />
+      </button>
+
+      <AnimatePresence>
+        {showGenerator && (
+          <motion.div 
+            initial={{ opacity: 0, x: -20, scale: 0.95 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: -20, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className="absolute top-20 left-6 z-[60] w-80 bg-[#001438]/90 backdrop-blur-2xl border border-blue-500/20 rounded-2xl p-5 shadow-2xl text-blue-100"
+          >
+            <h3 className="text-sm font-bold text-white mb-5 flex items-center gap-2">
+              <Settings2 className="w-4 h-4 text-blue-400" /> Generador de Fluidos
+            </h3>
+            
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-blue-200/60 uppercase tracking-widest block">Intensidad Global ({Math.round(config.containerOpacity * 100)}%)</label>
+                <input type="range" min="0" max="1" step="0.05" value={config.containerOpacity} onChange={(e) => setConfig({...config, containerOpacity: parseFloat(e.target.value)})} className="w-full h-1.5 bg-blue-900/50 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-blue-200/60 uppercase tracking-widest block">Textura Vidrio ({Math.round(config.noiseOpacity * 1000)}%)</label>
+                <input type="range" min="0" max="0.1" step="0.005" value={config.noiseOpacity} onChange={(e) => setConfig({...config, noiseOpacity: parseFloat(e.target.value)})} className="w-full h-1.5 bg-blue-900/50 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+              </div>
+              
+              <div className="pt-4 border-t border-blue-500/20">
+                <label className="text-[10px] font-bold text-blue-200/60 uppercase tracking-widest mb-3 block">Capas de Fusión</label>
+                <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                  {config.layers.map((layer, idx) => (
+                    <div key={layer.id} className="flex items-center justify-between bg-white/5 border border-white/5 px-3 py-2 rounded-lg">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-3 h-3 rounded-full shadow-[0_0_10px_rgba(255,255,255,0.2)]" style={{ backgroundColor: layer.color.replace(/[\d.]+\)$/g, '1)') }}></div>
+                        <span className="text-xs font-medium text-blue-100/90">{layer.id}</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={layer.active}
+                          onChange={(e) => {
+                            const newLayers = [...config.layers];
+                            newLayers[idx].active = e.target.checked;
+                            setConfig({...config, layers: newLayers});
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-7 h-4 bg-blue-950 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-500 border border-blue-900/50"></div>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Background Effects */}
-      <div className="absolute inset-0 z-0">
-        <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-900/40 via-[#001438] to-[#001438]"></div>
-        <div className="absolute -top-[30%] -right-[10%] w-[70%] h-[70%] rounded-full bg-blue-600/10 blur-[120px] mix-blend-screen pointer-events-none"></div>
-        <div className="absolute -bottom-[20%] -left-[10%] w-[50%] h-[50%] rounded-full bg-blue-400/5 blur-[100px] mix-blend-screen pointer-events-none"></div>
+      <div className="absolute inset-0 z-0 overflow-hidden bg-[#001438]">
+        {/* Base Gradient */}
+        <div className={`absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] ${config.baseGradient}`}></div>
+        
+        {/* Fluid Gradient Orbs Container */}
+        <div className="absolute inset-0 w-full h-full mix-blend-screen transition-opacity duration-300" style={{ opacity: config.containerOpacity }}>
+          {config.layers.filter(l => l.active).map((layer) => (
+            <motion.div 
+              key={layer.id}
+              animate={{ 
+                x: layer.animX, 
+                y: layer.animY 
+              }}
+              transition={{ 
+                duration: layer.duration, 
+                repeat: Infinity, 
+                ease: "easeInOut",
+                delay: layer.delay
+              }}
+              className="absolute rounded-full pointer-events-none will-change-transform"
+              style={{ 
+                ...layer.initialPos,
+                width: layer.size, 
+                height: layer.size,
+                background: `radial-gradient(circle, ${layer.color} 0%, ${layer.color.replace(/[\d.]+\)$/g, '0)')} 65%)`
+              }}
+            />
+          ))}
+        </div>
+
+        {/* SVG Noise Texture Overlay */}
+        <svg className="absolute inset-0 w-full h-full mix-blend-overlay pointer-events-none transition-opacity duration-300" style={{ opacity: config.noiseOpacity }} xmlns="http://www.w3.org/2000/svg">
+          <filter id="noiseFilter">
+            <feTurbulence type="fractalNoise" baseFrequency={config.noiseFrequency} numOctaves="3" stitchTiles="stitch"/>
+          </filter>
+          <rect width="100%" height="100%" filter="url(#noiseFilter)"/>
+        </svg>
       </div>
 
       {/* Grid Pattern */}
