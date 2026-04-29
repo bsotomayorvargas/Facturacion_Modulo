@@ -638,12 +638,14 @@ export default function App() {
         </div>
       </main>
 
-      {editingOrder !== null && (
-        <EditOrderModal 
-          orderEntry={editingOrder} 
-          onClose={() => setEditingOrder(null)} 
-        />
-      )}
+      <AnimatePresence>
+        {editingOrder !== null && (
+          <EditOrderModal 
+            orderEntry={editingOrder} 
+            onClose={() => setEditingOrder(null)} 
+          />
+        )}
+      </AnimatePresence>
 
       <LoginModal 
         isOpen={isLoginModalOpen}

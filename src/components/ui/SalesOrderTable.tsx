@@ -44,8 +44,22 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
     invoices
   } = useStore();
 
-  const [activeMenu, setActiveMenu] = useState<number | null>(null);
+  const [activeMenu, setActiveMenu] = useState<{ docEntry: number; x: number; y: number } | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
+
+  React.useEffect(() => {
+    const handleClick = () => setActiveMenu(null);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setActiveMenu(null);
+    };
+    document.addEventListener('click', handleClick);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('click', handleClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -192,11 +206,44 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
       cell: ({ row }) => {
         const o = row.original;
         
-        // Calcular lo facturado para esta OV cruzando baseEntry
+        const sumOrderGrossDocCur = o.documentLines.reduce((acc, line) => {
+           let lTotal = line.price * line.quantity;
+           if (line.taxCode === 'IVA' || line.taxCode === 'IVA_19' || !line.taxCode) {
+              lTotal *= 1.19;
+           }
+           return acc + lTotal;
+        }, 0);
+        const impliedDocRate = (o.currency === 'UF' && sumOrderGrossDocCur > 0 && o.totalNet > sumOrderGrossDocCur * 2) 
+            ? (o.totalNet / sumOrderGrossDocCur) 
+            : 1;
+
         const totalInvoiced = invoices.reduce((acc, inv) => {
           if (inv.isCancelled || inv.documentStatus === 'bost_Cancel') return acc;
           const matchingLines = inv.documentLines.filter(l => l.baseEntry === o.docEntry);
-          return acc + matchingLines.reduce((sum, l) => sum + (l.price * l.quantity), 0);
+          return acc + matchingLines.reduce((sum, l) => {
+            let lineTotalGross = l.lineTotal;
+            const validRate = Math.max(inv.docRate || 0, o.docRate || 0, impliedDocRate);
+            
+            if (lineTotalGross !== undefined) {
+               if (inv.currency === 'UF' || l.currency === 'UF') {
+                  if (lineTotalGross < 500000) {
+                     lineTotalGross = lineTotalGross * validRate;
+                  }
+               }
+            } else {
+               lineTotalGross = l.price * l.quantity;
+               const isUF = o.currency === 'UF' || l.currency === 'UF' || inv.currency === 'UF';
+               
+               if (l.taxCode === 'IVA' || l.taxCode === 'IVA_19' || !l.taxCode) {
+                 lineTotalGross = lineTotalGross * 1.19;
+               }
+
+               if (isUF && lineTotalGross < 500000) {
+                 lineTotalGross = lineTotalGross * validRate;
+               }
+            }
+            return sum + lineTotalGross;
+          }, 0);
         }, 0);
         
         const saldo = o.totalNet - totalInvoiced;
@@ -245,93 +292,26 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
           <div className="relative text-center" onClick={(e) => e.stopPropagation()}>
             <button 
               className="text-slate-400 hover:text-slate-700 transition-colors p-1 rounded hover:bg-slate-100"
-              onClick={() => setActiveMenu(activeMenu === o.docEntry ? null : o.docEntry)}
+              onClick={(e) => {
+                e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                setActiveMenu({
+                  docEntry: o.docEntry,
+                  x: Math.min(rect.right - 144, window.innerWidth - 150),
+                  y: rect.bottom + 4
+                });
+              }}
               disabled={isProcessingBatch}
             >
               <MoreVertical className="w-4 h-4" />
             </button>
-            <AnimatePresence>
-              {activeMenu === o.docEntry && (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.95, y: -5 }} 
-                  animate={{ opacity: 1, scale: 1, y: 0 }} 
-                  exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute right-8 top-2 bg-white shadow-xl border border-slate-200 rounded-sm py-1 z-50 w-36 flex flex-col items-stretch overflow-hidden origin-top-right text-left"
-                >
-                  <button 
-                    className="px-4 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 text-left transition-colors"
-                    onClick={() => { 
-                      setActiveMenu(null); 
-                      setConfirmConfig({
-                        isOpen: true,
-                        title: 'Confirmar Facturación Total',
-                        actionType: 'invoice',
-                        data: {
-                          docNum: o.docNum,
-                          clientName: o.cardName,
-                          project: o.project,
-                          totalAmount: o.totalNet,
-                          itemCount: o.documentLines.length
-                        },
-                        onConfirm: (comment) => {
-                          invoiceFullOrder(o.docEntry);
-                          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
-                          if (comment) {
-                            sendFacturacionEmail(
-                              o.docNum,
-                              o.project || "Sin Proyecto",
-                              o.totalNet,
-                              o.cardName,
-                              comment,
-                              false
-                            );
-                          }
-                        }
-                      });
-                    }}
-                  >
-                    Facturar Orden
-                  </button>
-                  <button 
-                    className="px-4 py-2 text-[11px] font-semibold text-blue-700 hover:bg-blue-50 text-left transition-colors"
-                    onClick={() => { setActiveMenu(null); onEditOrder(o.docEntry); }}
-                  >
-                    Modificar Orden
-                  </button>
-                  <div className="h-px bg-slate-100 my-1 cursor-default"></div>
-                  <button 
-                    className="px-4 py-2 text-[11px] font-semibold text-red-600 hover:bg-red-50 text-left transition-colors"
-                    onClick={() => { 
-                      setActiveMenu(null); 
-                      setConfirmConfig({
-                        isOpen: true,
-                        title: 'Confirmar Cierre de Orden en SAP',
-                        actionType: 'close',
-                        data: {
-                          docNum: o.docNum,
-                          clientName: o.cardName,
-                          project: o.project
-                        },
-                        onConfirm: () => {
-                          closeOrder(o.docEntry);
-                          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
-                        }
-                      });
-                    }}
-                  >
-                    Cerrar Orden
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
         );
       },
       enableSorting: false,
       meta: { className: "w-12 text-center" }
     }
-  ], [batchSelectedOrders, isProcessingBatch, selectedOrderEntry, activeMenu]);
+  ], [batchSelectedOrders, isProcessingBatch, selectedOrderEntry, invoices]);
 
   const handleInvoice = () => {
     if (selectedOrderEntry) {
@@ -354,7 +334,7 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
               sendFacturacionEmail(
                 order.docNum,
                 order.project || "Sin Proyecto",
-                order.totalNet, // Idealmente el neto de la selección parcial, pero order.totalNet sirve por ahora
+                order.totalNet,
                 order.cardName,
                 comment,
                 false
@@ -406,7 +386,7 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {o.documentLines.map(line => {
+                {o.documentLines.map((line, index) => {
                   const invoicedQty = invoices.reduce((acc, inv) => {
                     if (inv.isCancelled || inv.documentStatus === 'bost_Cancel') return acc;
                     const matchingLine = inv.documentLines.find(l => l.baseEntry === o.docEntry && l.baseLine === line.lineNum);
@@ -428,7 +408,20 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
                   );
 
                   return (
-                    <tr key={line.lineNum} className={`transition-colors ${isChecked ? 'bg-blue-50/50' : 'hover:bg-slate-50'} ${isLineLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`} onClick={() => !isLineLocked && toggleSubline(line.lineNum)}>
+                    <motion.tr 
+                      key={line.lineNum} 
+                      initial={{ opacity: 0, y: 15 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ 
+                        type: "spring", 
+                        stiffness: 400, 
+                        damping: 30, 
+                        mass: 0.8,
+                        delay: index * 0.03 
+                      }}
+                      className={`transition-colors ${isChecked ? 'bg-blue-50/50' : 'hover:bg-slate-50'} ${isLineLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`} 
+                      onClick={() => !isLineLocked && toggleSubline(line.lineNum)}
+                    >
                       <td className="py-1.5 px-3 w-16 text-center border-r border-slate-200 border-l" onClick={e => e.stopPropagation()}>
                         <input 
                           type="checkbox" 
@@ -462,7 +455,7 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
                           {isSimulating ? 'Ocultar' : 'Ver JSON'}
                         </button>
                       </td>
-                    </tr>
+                    </motion.tr>
                   );
                 })}
               </tbody>
@@ -503,7 +496,6 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-white relative">
-      {/* Search and Filter Toolbar */}
       <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-4 items-center justify-between shrink-0">
         <div className="flex items-center gap-3 w-full sm:w-auto">
           <div className="relative w-full sm:w-64">
@@ -555,13 +547,105 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
           getRowClassName={getRowClassName}
           expanded={selectedOrderEntry ? { [selectedOrderEntry]: true } : {}}
           onRowClick={(row) => {
-            // Edit modal opens directly on row click as requested by user
             if (row.sheetStatus !== 'anomaly') {
-              onEditOrder(row.docEntry);
+              selectOrder(selectedOrderEntry === row.docEntry ? null : row.docEntry);
+            }
+          }}
+          onRowContextMenu={(e, row) => {
+            e.preventDefault();
+            if (row.sheetStatus !== 'anomaly') {
+              setActiveMenu({
+                docEntry: row.docEntry,
+                x: Math.min(e.clientX, window.innerWidth - 150),
+                y: Math.min(e.clientY, window.innerHeight - 150)
+              });
             }
           }}
         />
       </div>
+
+      <AnimatePresence>
+        {activeMenu && (() => {
+          const o = data.find(order => order.docEntry === activeMenu.docEntry);
+          if (!o) return null;
+          return (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: -5 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: -5 }}
+              transition={{ duration: 0.15 }}
+              className="fixed bg-white shadow-xl border border-slate-200 rounded-sm py-1 z-[100] w-36 flex flex-col items-stretch overflow-hidden origin-top-left text-left"
+              style={{ top: activeMenu.y, left: activeMenu.x }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button 
+                className="px-4 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 text-left transition-colors"
+                onClick={() => { 
+                  setActiveMenu(null); 
+                  setConfirmConfig({
+                    isOpen: true,
+                    title: 'Confirmar Facturación Total',
+                    actionType: 'invoice',
+                    data: {
+                      docNum: o.docNum,
+                      clientName: o.cardName,
+                      project: o.project,
+                      totalAmount: o.totalNet,
+                      itemCount: o.documentLines.length
+                    },
+                    onConfirm: (comment) => {
+                      invoiceFullOrder(o.docEntry);
+                      setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                      if (comment) {
+                        sendFacturacionEmail(
+                          o.docNum,
+                          o.project || "Sin Proyecto",
+                          o.totalNet,
+                          o.cardName,
+                          comment,
+                          false
+                        );
+                      }
+                    }
+                  });
+                }}
+              >
+                Facturar Orden
+              </button>
+              <button 
+                className="px-4 py-2 text-[11px] font-semibold text-blue-700 hover:bg-blue-50 text-left transition-colors"
+                onClick={() => { setActiveMenu(null); onEditOrder(o.docEntry); }}
+              >
+                Modificar Orden
+              </button>
+              <div className="h-px bg-slate-100 my-1 cursor-default"></div>
+              <button 
+                className="px-4 py-2 text-[11px] font-semibold text-red-600 hover:bg-red-50 text-left transition-colors"
+                onClick={() => { 
+                  setActiveMenu(null); 
+                  setConfirmConfig({
+                    isOpen: true,
+                    title: 'Confirmar Cierre de Orden en SAP',
+                    actionType: 'close',
+                    data: {
+                      docNum: o.docNum,
+                      clientName: o.cardName,
+                      project: o.project
+                    },
+                    onConfirm: () => {
+                      closeOrder(o.docEntry);
+                      setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                    }
+                  });
+                }}
+              >
+                Cerrar Orden
+              </button>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
+
       <ConfirmationModal 
         {...confirmConfig} 
         onClose={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))} 

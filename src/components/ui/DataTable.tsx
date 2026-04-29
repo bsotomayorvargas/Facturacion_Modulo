@@ -31,6 +31,7 @@ interface DataTableProps<TData, TValue> {
   onExpandedChange?: React.Dispatch<React.SetStateAction<ExpandedState>>;
   globalFilter?: string;
   columnFilters?: ColumnFiltersState;
+  onRowContextMenu?: (e: React.MouseEvent, row: any) => void;
 }
 
 export function DataTable<TData, TValue>({
@@ -48,7 +49,8 @@ export function DataTable<TData, TValue>({
   expanded,
   onExpandedChange,
   globalFilter,
-  columnFilters
+  columnFilters,
+  onRowContextMenu
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [internalExpanded, setInternalExpanded] = useState<ExpandedState>({});
@@ -132,10 +134,17 @@ export function DataTable<TData, TValue>({
                 return (
                   <React.Fragment key={row.id}>
                     <motion.tr
-                      initial={{ opacity: 0, y: 10 }}
+                      initial={{ opacity: 0, y: 15 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.2, delay: index * 0.02 }}
+                      transition={{ 
+                        type: "spring", 
+                        stiffness: 400, 
+                        damping: 30, 
+                        mass: 0.8,
+                        delay: index * 0.03 
+                      }}
                       onClick={() => onRowClick?.(row.original)}
+                      onContextMenu={(e) => onRowContextMenu?.(e, row.original)}
                       className={`transition-colors group hover:bg-slate-50/80 ${row.getIsExpanded() ? 'bg-blue-50/30' : ''} ${customClass} ${onRowClick ? 'cursor-pointer' : ''}`}
                     >
                       {row.getVisibleCells().map((cell) => {
@@ -150,19 +159,33 @@ export function DataTable<TData, TValue>({
                       })}
                     </motion.tr>
                     
-                    <AnimatePresence>
+                    <AnimatePresence initial={false}>
                       {row.getIsExpanded() && renderSubComponent && (
                         <motion.tr
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          transition={{ duration: 0.2 }}
-                          className="bg-slate-50 border-b border-slate-200 overflow-hidden"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ 
+                            type: "spring", 
+                            stiffness: 400, 
+                            damping: 30 
+                          }}
+                          className="bg-slate-50 border-b border-slate-200"
                         >
                           <td colSpan={row.getVisibleCells().length} className="p-0 border-0">
-                            <div className="overflow-hidden">
+                            <motion.div
+                              initial={{ height: 0 }}
+                              animate={{ height: "auto" }}
+                              exit={{ height: 0 }}
+                              transition={{ 
+                                type: "spring", 
+                                stiffness: 400, 
+                                damping: 30 
+                              }}
+                              className="overflow-hidden"
+                            >
                               {renderSubComponent({ row: row.original })}
-                            </div>
+                            </motion.div>
                           </td>
                         </motion.tr>
                       )}

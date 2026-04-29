@@ -4,6 +4,7 @@ import { Search, Filter, Loader2, Download, CheckSquare, Square, Mail, Banknote 
 import { formatDate } from '../lib/utils';
 import { generateBancoChileTxt, downloadTxt } from '../lib/bancoChileFormat';
 import { sendNominaEmail } from '../lib/emailService';
+import { motion } from 'motion/react';
 
 export const PurchaseInvoicesView: React.FC = () => {
   const {
@@ -185,7 +186,7 @@ export const PurchaseInvoicesView: React.FC = () => {
                 </td>
               </tr>
             ) : (
-              visiblePurchases.map((inv) => {
+              visiblePurchases.map((inv, index) => {
                 const isSelected = selectedPurchases.includes(inv.docEntry);
                 const saldo = inv.docTotal - inv.paidToDate;
                 
@@ -200,8 +201,17 @@ export const PurchaseInvoicesView: React.FC = () => {
                 else if (diffDays <= 3) dueDateColor = "text-amber-600 font-semibold";
 
                 return (
-                  <tr 
+                  <motion.tr 
                     key={inv.docEntry} 
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ 
+                      type: "spring", 
+                      stiffness: 400, 
+                      damping: 30, 
+                      mass: 0.8,
+                      delay: index * 0.03 
+                    }}
                     className={`hover:bg-blue-50/50 transition-colors group cursor-pointer ${isSelected ? 'bg-blue-50/50' : ''}`}
                     onClick={(e) => {
                        // prevent toggling if user clicks a button inside row (though there are none currently)
@@ -240,7 +250,7 @@ export const PurchaseInvoicesView: React.FC = () => {
                     <td className="px-3 py-2 text-slate-500 truncate max-w-[120px]" title={inv.reference}>
                       {inv.reference || '-'}
                     </td>
-                  </tr>
+                  </motion.tr>
                 );
               })
             )}

@@ -293,7 +293,7 @@ export const useStore = create<AppState>((set, get) => ({
 
     const filter = filterClauses.filter(Boolean).join(' and ');
     
-    const initialOdataQuery = `Orders()?$select=DocEntry,DocNum,DocType,DocDate,DocDueDate,TaxDate,CardCode,DocTotal,DocCurrency,DocRate,Reference1,Comments,Project,JournalMemo,BPLName,Cancelled,DocumentStatus,DocumentLines&$filter=${filter}`;
+    const initialOdataQuery = `Orders()?$select=DocEntry,DocNum,DocType,DocDate,DocDueDate,TaxDate,CardCode,CardName,DocTotal,DocCurrency,DocRate,Reference1,Comments,Project,JournalMemo,BPLName,Cancelled,DocumentStatus,DocumentLines&$filter=${filter}`;
     console.log(`[Service Layer Request]: Querying SAP with filter: ${filter}`);
     
     // Reset selection before extraction
@@ -373,6 +373,7 @@ export const useStore = create<AppState>((set, get) => ({
           dscription: line.ItemDescription,
           quantity: line.Quantity,
           price: line.Price,
+          lineTotal: line.GrossTotal || (line.LineTotal ? line.LineTotal * 1.19 : undefined),
           discountPercent: line.DiscountPercent,
           taxCode: line.TaxCode,
           project: line.ProjectCode || "",
@@ -1249,6 +1250,7 @@ export const useStore = create<AppState>((set, get) => ({
           dscription: line.ItemDescription,
           quantity: line.Quantity,
           price: line.Price,
+          lineTotal: line.GrossTotal || (line.LineTotal ? line.LineTotal * 1.19 : undefined),
           discountPercent: line.DiscountPercent,
           taxCode: line.TaxCode,
           project: line.ProjectCode,

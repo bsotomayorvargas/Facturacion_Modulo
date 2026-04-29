@@ -30,6 +30,7 @@ export interface Subline {
   dscription: string;
   quantity: number;
   price: number;
+  lineTotal?: number; // Added to get SAP's exact calculated total for the line
   discountPercent: number;
   taxCode: string;
   project: string; // ProjectCode from SAP

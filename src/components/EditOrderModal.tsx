@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SalesOrder, Subline } from '../types';
 import { useStore } from '../store';
-import { X, Plus, AlertCircle } from 'lucide-react';
+import { X, Plus, AlertCircle, Save } from 'lucide-react';
 import { formatCurrency, formatDate } from '../lib/utils';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface EditOrderModalProps {
   orderEntry: number;
@@ -18,6 +19,7 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
   const [headerProject, setHeaderProject] = useState('');
   const [lines, setLines] = useState<(Subline & { isNew?: boolean, _id?: string })[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [showWarning, setShowWarning] = useState(false);
 
   useEffect(() => {
     if (order) {
@@ -27,6 +29,50 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
       setLines(order.documentLines.map(l => ({ ...l })));
     }
   }, [order]);
+
+  const checkIsDirty = useCallback(() => {
+    if (!order) return false;
+    if (comments !== (order.comments || '')) return true;
+    if (reference !== (order.reference || '')) return true;
+    if (headerProject !== (order.project || '')) return true;
+    
+    const hasLineChanges = lines.some((l) => {
+      if (l.isNew) return true;
+      const originalLine = order.documentLines.find(ol => ol.lineNum === l.lineNum);
+      if (!originalLine) return true;
+      
+      return l.quantity !== originalLine.quantity || 
+             l.price !== originalLine.price || 
+             l.currency !== originalLine.currency ||
+             l.itemCode !== originalLine.itemCode ||
+             l.dscription !== originalLine.dscription;
+    });
+    
+    return hasLineChanges;
+  }, [order, comments, reference, headerProject, lines]);
+
+  const handleCloseAttempt = useCallback(() => {
+    if (isSaving) return;
+    if (checkIsDirty()) {
+      setShowWarning(true);
+    } else {
+      onClose();
+    }
+  }, [checkIsDirty, onClose, isSaving]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showWarning) {
+          setShowWarning(false);
+        } else {
+          handleCloseAttempt();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleCloseAttempt, showWarning]);
 
   if (!order) return null;
 
@@ -73,8 +119,6 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
     setLines(newLines);
   };
 
-
-
   const handleAddLine = () => {
     setLines([
       ...lines,
@@ -112,17 +156,10 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
       
       const isChanged = l.quantity !== originalLine.quantity || 
                         l.price !== originalLine.price || 
-                        l.currency !== originalLine.currency;
+                        l.currency !== originalLine.currency ||
+                        l.itemCode !== originalLine.itemCode ||
+                        l.dscription !== originalLine.dscription;
                         
-      if (isChanged) {
-        console.log(`Line ${l.lineNum} changed:`, {
-          q: l.quantity !== originalLine.quantity,
-          p: l.price !== originalLine.price,
-          c: l.currency !== originalLine.currency,
-          oldCost: originalLine.price,
-          newCost: l.price
-        });
-      }
       return isChanged;
     });
        
@@ -164,16 +201,100 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="bg-white rounded-md shadow-2xl w-full max-w-5xl flex flex-col max-h-[90vh] overflow-hidden border border-slate-200">
-        
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+    >
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 15 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 15 }}
+        transition={{ type: "spring", stiffness: 350, damping: 25 }}
+        className="bg-white rounded-xl shadow-2xl w-full max-w-5xl flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 relative"
+      >
+        <AnimatePresence>
+          {isSaving && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center"
+            >
+              <motion.div 
+                animate={{ rotate: 360 }}
+                transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full mb-4"
+              />
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="flex items-center gap-2"
+              >
+                <Save className="w-5 h-5 text-blue-700" />
+                <p className="text-blue-800 font-bold tracking-widest text-sm uppercase">Guardando Cambios</p>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showWarning && !isSaving && (
+             <motion.div 
+               initial={{ opacity: 0 }} 
+               animate={{ opacity: 1 }} 
+               exit={{ opacity: 0 }}
+               className="absolute inset-0 z-40 bg-slate-900/40 backdrop-blur-[1px] flex items-center justify-center p-4"
+             >
+               <motion.div 
+                 initial={{ scale: 0.9, y: 10, opacity: 0 }}
+                 animate={{ scale: 1, y: 0, opacity: 1 }}
+                 exit={{ scale: 0.9, y: 10, opacity: 0 }}
+                 transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                 className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full border border-slate-200"
+               >
+                 <div className="flex items-center gap-3 mb-3 text-amber-600">
+                   <AlertCircle className="w-6 h-6" />
+                   <h3 className="text-lg font-bold">Modificaciones no guardadas</h3>
+                 </div>
+                 <p className="text-slate-600 mb-6 text-sm">
+                   Hay modificaciones en la orden que no han sido guardadas. ¿Deseas guardarlas antes de salir?
+                 </p>
+                 <div className="flex justify-end gap-2">
+                   <button 
+                     onClick={onClose}
+                     className="px-4 py-2 rounded text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 transition-colors"
+                   >
+                     No Guardar
+                   </button>
+                   <div className="flex-1"></div>
+                   <button 
+                     onClick={() => setShowWarning(false)}
+                     className="px-4 py-2 rounded text-sm font-semibold text-slate-500 hover:text-slate-700 transition-colors"
+                   >
+                     Cancelar
+                   </button>
+                   <button 
+                     onClick={() => { setShowWarning(false); handleSave(); }}
+                     className="px-4 py-2 rounded text-sm font-semibold text-white bg-blue-800 hover:bg-blue-900 transition-colors shadow-sm"
+                   >
+                     Guardar Cambios
+                   </button>
+                 </div>
+               </motion.div>
+             </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
           <div>
             <h2 className="text-xl font-bold tracking-tight text-slate-800">OV {order.docNum}</h2>
             <p className="text-xs text-slate-500 font-medium">{order.cardName} • {formatDate(order.docDate)}</p>
           </div>
-          <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 rounded drop-shadow-sm hover:bg-white transition-colors">
+          <button onClick={handleCloseAttempt} className="p-2 text-slate-400 hover:text-slate-600 rounded drop-shadow-sm hover:bg-white transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -264,10 +385,24 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
+                  <AnimatePresence initial={false}>
                   {lines.map((line, idx) => {
                     const isClosed = line.lineStatus === 'bost_Close' && !line.isNew;
                     return (
-                      <tr key={line._id ? line._id : line.lineNum} className={isClosed ? "bg-slate-50/50" : ""}>
+                      <motion.tr 
+                        key={line._id ? line._id : line.lineNum} 
+                        initial={{ opacity: 0, y: 15 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, height: 0, scale: 0.9 }}
+                        transition={{ 
+                          type: "spring", 
+                          stiffness: 400, 
+                          damping: 30, 
+                          mass: 0.8,
+                          delay: idx * 0.03 
+                        }}
+                        className={isClosed ? "bg-slate-50/50" : ""}
+                      >
                         <td className="p-3 text-center font-mono text-xs text-slate-400">
                           {line.isNew ? '*' : line.lineNum + 1}
                         </td>
@@ -337,9 +472,10 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
                             </button>
                           )}
                         </td>
-                      </tr>
+                      </motion.tr>
                     );
                   })}
+                  </AnimatePresence>
                 </tbody>
               </table>
               {lines.some(l => l.lineStatus === 'bost_Close' && !l.isNew) && (
@@ -356,7 +492,7 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
         {/* Footer */}
         <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
           <button 
-            onClick={onClose}
+            onClick={handleCloseAttempt}
             className="px-4 py-2 rounded-sm text-sm font-semibold text-slate-600 hover:bg-slate-200 transition-colors"
           >
             Cancelar
@@ -370,7 +506,7 @@ export function EditOrderModal({ orderEntry, onClose }: EditOrderModalProps) {
           </button>
         </div>
         
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
