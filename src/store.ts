@@ -35,7 +35,7 @@ const MOCK_ORDERS: SalesOrder[] = [];
 interface AppState {
   // Session
   session: Session;
-  connect: (url: string, companyDb: string, user: string, pass: string) => Promise<void>;
+  connect: (companyDb: string, user: string, pass: string) => Promise<void>;
   disconnect: () => void;
 
   // Master Data
@@ -98,7 +98,6 @@ interface AppState {
 
 export const useStore = create<AppState>((set, get) => ({
   session: {
-    url: "https://hanapro-01.local:50000/b1s/v2",
     companyDb: "SBOFLUXSOLAR",
     user: "analista_ventas",
     token: null,
@@ -118,35 +117,56 @@ export const useStore = create<AppState>((set, get) => ({
   selectedSublines: [],
   selectedPurchases: [],
 
-  connect: async (url, companyDb, user, pass) => {
-    // Real POST to Service Layer Login via proxy
-    console.log(`Authenticating ${user} against ${url} for DB ${companyDb}`);
+  connect: async (companyDb, user, pass) => {
+    console.log(`Authenticating ${user} for DB ${companyDb}`);
     
-    const response = await fetch('/api/sap/proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    try {
+      const response = await fetch('/api/sap/proxy', {
         method: 'POST',
-        url: `${url}/Login`,
-        body: { CompanyDB: companyDb, UserName: user, Password: pass }
-      })
-    });
-    
-    if (!response.ok) {
-      let errValue = "Error Auth API";
-      try { const err = await response.json(); errValue = err?.error?.message?.value || JSON.stringify(err); } catch(e) { }
-      throw new Error(errValue);
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          method: 'POST',
+          path: '/Login',
+          body: { CompanyDB: companyDb, UserName: user, Password: pass }
+        })
+      });
+      
+      if (!response.ok) {
+        let errValue = "Error al intentar conectar con el servidor SAP.";
+        try { 
+          const err = await response.json(); 
+          const sapMessage = err?.error?.message?.value || err?.error || JSON.stringify(err);
+          
+          if (sapMessage.toLowerCase().includes('logon') || sapMessage.toLowerCase().includes('password') || sapMessage.toLowerCase().includes('user')) {
+            errValue = "Usuario o contraseña incorrectos, o base de datos inválida.";
+          } else if (response.status === 502 || response.status === 503 || response.status === 504 || response.status === 500) {
+            errValue = "El servidor SAP (Service Layer) se encuentra caído o inaccesible en este momento.";
+          } else {
+            errValue = `Error SAP: ${sapMessage}`;
+          }
+        } catch(e) { 
+          if (response.status >= 500) {
+            errValue = "El servidor de integración no está respondiendo (Servidor caído).";
+          }
+        }
+        throw new Error(errValue);
+      }
+      
+      const data = await response.json();
+      set({ session: { companyDb, user, token: data.SessionId, isConnected: true, bplid: "1" } }); // Default BPLId to "1" until synched
+      
+      // Sincronizar automáticamente los datos maestros al iniciar sesión
+      get().syncMasterData().catch(console.error);
+    } catch (error: any) {
+      if (error.message.includes('Failed to fetch') || error.name === 'TypeError') {
+        throw new Error("No se pudo establecer conexión. El servidor proxy o el servidor SAP B1 está inactivo.");
+      }
+      throw error;
     }
-    
-    const data = await response.json();
-    set({ session: { url, companyDb, user, token: data.SessionId, isConnected: true, bplid: "1" } }); // Default BPLId to "1" until synched
-    
-    // Sincronizar automáticamente los datos maestros al iniciar sesión
-    get().syncMasterData().catch(console.error);
   },
 
   disconnect: () => {
-    set({ session: { url: "", companyDb: "", user: "", token: null, isConnected: false, bplid: null }, orders: [] });
+    set({ session: { companyDb: "", user: "", token: null, isConnected: false, bplid: null }, orders: [] });
   },
 
   masterData: {
@@ -159,14 +179,14 @@ export const useStore = create<AppState>((set, get) => ({
     set((state) => ({ masterData: { ...state.masterData, isSyncing: true } }));
     try {
       const { session } = get();
-      if (!session.url || !session.token) throw new Error("No hay sesi\u00f3n activa");
+      if (!session.token) throw new Error("No hay sesi\u00f3n activa");
 
       const response = await fetch('/api/sap/proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'GET',
-          url: `${session.url}/BusinessPlaces?$filter=Disabled eq 'tNO'`,
+          path: `/BusinessPlaces?$filter=Disabled eq 'tNO'`,
           token: session.token
         })
       });
@@ -280,7 +300,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({ selectedOrderEntry: null, selectedSublines: [] });
 
     try {
-      if (!session.url || !session.token) throw new Error("No hay sesi\u00f3n para descargar transacciones");
+      if (!session.token) throw new Error("No hay sesi\u00f3n para descargar transacciones");
 
       let allSapOrders: any[] = [];
       let currentPath = initialOdataQuery;
@@ -288,17 +308,15 @@ export const useStore = create<AppState>((set, get) => ({
 
       // Loop to fetch paginated results using @odata.nextLink
       while (hasNextPage) {
-        // Clean paths to prevent double slashes (e.g. /b1s/v2//Orders...)
-        const cleanPath = currentPath.startsWith('/') ? currentPath.substring(1) : currentPath;
-        const baseUrl = session.url.endsWith('/') ? session.url.slice(0, -1) : session.url;
-        const targetUrl = `${baseUrl}/${cleanPath}`;
+        // Clean paths to ensure it starts with /
+        const cleanPath = currentPath.startsWith('/') ? currentPath : `/${currentPath}`;
 
         const response = await fetch('/api/sap/proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             method: 'GET',
-            url: targetUrl,
+            path: cleanPath,
             token: session.token
           })
         });
@@ -492,7 +510,7 @@ export const useStore = create<AppState>((set, get) => ({
   // Order operations
   updateSalesOrder: async (docEntry, updates) => {
     const { session } = get();
-    if (!session.url || !session.token) {
+    if (!session.token) {
       alert("No hay sesión activa para actualizar OV.");
       return;
     }
@@ -558,7 +576,7 @@ export const useStore = create<AppState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'PATCH',
-          url: `${session.url}/Orders(${docEntry})`,
+          path: `/Orders(${docEntry})`,
           body: payload,
           token: session.token
         })
@@ -611,7 +629,7 @@ export const useStore = create<AppState>((set, get) => ({
     const { session, batchSelectedOrders } = state;
     
     if (batchSelectedOrders.length === 0) return;
-    if (!session.url || !session.token) {
+    if (!session.token) {
       alert("No hay sesión activa para realizar cierres masivos.");
       return;
     }
@@ -639,7 +657,7 @@ export const useStore = create<AppState>((set, get) => ({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               method: 'PATCH',
-              url: `${session.url}/Orders(${docEntry})`,
+              path: `/Orders(${docEntry})`,
               token: session.token,
               body: { Comments: newComments }
             })
@@ -651,7 +669,7 @@ export const useStore = create<AppState>((set, get) => ({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               method: 'POST',
-              url: `${session.url}/Orders(${docEntry})/Close`,
+              path: `/Orders(${docEntry})/Close`,
               token: session.token
             })
          });
@@ -690,7 +708,7 @@ export const useStore = create<AppState>((set, get) => ({
     const state = get();
     const { session, batchSelectedOrders } = state;
     if (batchSelectedOrders.length === 0) return;
-    if (!session.url || !session.token) {
+    if (!session.token) {
       alert("No hay sesión activa para facturar masivamente.");
       return;
     }
@@ -701,7 +719,7 @@ export const useStore = create<AppState>((set, get) => ({
     const errors: { docNum: number, error: string }[] = [];
     const today = new Date().toISOString().split('T')[0];
     const user = session.user || "UnknownUser";
-    const comments = `Facturado masivamente desde Portal por ${user} el ${today}`;
+    const jrlMemoBase = `Facturado masivamente desde Portal por ${user.split('@')[0]} el ${today}`;
 
     for (let i = 0; i < batchSelectedOrders.length; i++) {
        const docEntry = batchSelectedOrders[i];
@@ -713,6 +731,11 @@ export const useStore = create<AppState>((set, get) => ({
        try {
          if (!order) throw new Error("Datos de orden no encontrados en UI");
 
+         const hitoName = order.sheetStatus === 'ready_anticipo' ? 'Anticipo' : (order.sheetStatus === 'ready_cierre' ? 'Certificacion' : 'Venta Carga Electrica');
+         const isUF = order.currency === 'UF';
+         const docTotalUF = isUF ? order.totalNet : (order.docRate && order.docRate > 1 ? (order.totalNet / order.docRate).toFixed(2) : order.totalNet);
+         const clientComments = `Proyecto Fotovoltaico Flux\nContrato ${docTotalUF} UF\nFacturacion Hito ${hitoName}`;
+
          const payload: ODataV2InvoicePayload = {
            BPL_IDAssignedToInvoice: parseInt(order.bplid, 10),
            DocType: "dDocument_Items",
@@ -722,7 +745,8 @@ export const useStore = create<AppState>((set, get) => ({
            TaxDate: today,
            DocCurrency: order.currency,
            CardCode: order.cardCode,
-           Comments: comments,
+           Comments: clientComments,
+           JournalMemo: `Factura de Venta 33 - OV ${docNum} - ${order.cardCode}`,
            Indicator: "33",
            U_Orden_Venta: String(order.docNum),
            DocumentLines: order.documentLines
@@ -750,7 +774,7 @@ export const useStore = create<AppState>((set, get) => ({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               method: 'POST',
-              url: `${session.url}/Invoices`,
+              path: `/Invoices`,
               body: payload,
               token: session.token
             })
@@ -793,7 +817,7 @@ export const useStore = create<AppState>((set, get) => ({
     // Si no se pasan órdenes, usamos todas las del store
     const sourceOrders = targetOrders || orders;
     
-    if (!session.url || !session.token) {
+    if (!session.token) {
       alert("No hay sesión activa para regularizar.");
       return;
     }
@@ -841,7 +865,7 @@ export const useStore = create<AppState>((set, get) => ({
            headers: { 'Content-Type': 'application/json' },
            body: JSON.stringify({
              method: 'PATCH',
-             url: `${session.url}/Orders(${order.docEntry})`,
+             path: `/Orders(${order.docEntry})`,
              body: { Project: firstLineWithProject.project },
              token: session.token
            })
@@ -897,7 +921,7 @@ export const useStore = create<AppState>((set, get) => ({
   closeOrder: async (docEntry) => {
     try {
       const { session } = get();
-      if (!session.url || !session.token) throw new Error("No hay sesión activa");
+      if (!session.token) throw new Error("No hay sesión activa");
       
       const orderToClose = get().orders.find(o => o.docEntry === docEntry);
       const docNumLabel = orderToClose ? orderToClose.docNum : docEntry;
@@ -916,7 +940,7 @@ export const useStore = create<AppState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'PATCH',
-          url: `${session.url}/Orders(${docEntry})`,
+          path: `/Orders(${docEntry})`,
           token: session.token,
           body: { Comments: newComments }
         })
@@ -935,7 +959,7 @@ export const useStore = create<AppState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'POST',
-          url: `${session.url}/Orders(${docEntry})/Close`,
+          path: `/Orders(${docEntry})/Close`,
           token: session.token
         })
       });
@@ -968,7 +992,7 @@ export const useStore = create<AppState>((set, get) => ({
     try {
       const state = get();
       const { session } = state;
-      if (!session.url || !session.token) throw new Error("No hay sesión para facturar");
+      if (!session.token) throw new Error("No hay sesión para facturar");
 
       const order = state.orders.find(o => o.docEntry === docEntry);
       if (!order) return;
@@ -1007,7 +1031,7 @@ export const useStore = create<AppState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'POST',
-          url: `${session.url}/Invoices`,
+          path: `/Invoices`,
           body: payload,
           token: session.token
         })
@@ -1039,14 +1063,14 @@ export const useStore = create<AppState>((set, get) => ({
     
     try {
       const { session } = get();
-      if (!session.url || !session.token) throw new Error("No hay sesi\u00f3n para facturar");
+      if (!session.token) throw new Error("No hay sesi\u00f3n para facturar");
 
       const response = await fetch('/api/sap/proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'POST',
-          url: `${session.url}/Invoices`,
+          path: `/Invoices`,
           body: payload,
           token: session.token
         })
@@ -1145,14 +1169,14 @@ export const useStore = create<AppState>((set, get) => ({
 
     const filter = filterClauses.filter(Boolean).join(' and ');
     
-    const initialOdataQuery = `Invoices()?$select=DocEntry,DocNum,DocType,DocDate,DocDueDate,TaxDate,CardCode,DocTotal,DocCurrency,DocRate,Reference1,Comments,Project,JournalMemo,BPLName,Cancelled,DocumentStatus,DocumentLines,U_EXX_FE_DESERR,Indicator&$filter=${filter}`;
+    const initialOdataQuery = `Invoices()?$select=DocEntry,DocNum,FolioNumber,DocType,DocDate,DocDueDate,TaxDate,CardCode,DocTotal,DocCurrency,DocRate,Reference1,Comments,Project,JournalMemo,BPLName,Cancelled,DocumentStatus,DocumentLines,U_EXX_FE_DESERR,Indicator&$filter=${filter}`;
     console.log(`[Service Layer Request]: Querying SAP Facturas with filter: ${filter}`);
     
     // Reset selection before extraction
     set({ selectedOrderEntry: null, selectedSublines: [], isFetchingInvoices: true });
 
     try {
-      if (!session.url || !session.token) throw new Error("No hay sesi\u00f3n para descargar transacciones");
+      if (!session.token) throw new Error("No hay sesi\u00f3n para descargar transacciones");
 
       let allSapInvoices: any[] = [];
       let currentPath = initialOdataQuery;
@@ -1160,16 +1184,14 @@ export const useStore = create<AppState>((set, get) => ({
 
       // Loop to fetch paginated results using @odata.nextLink
       while (hasNextPage) {
-        const cleanPath = currentPath.startsWith('/') ? currentPath.substring(1) : currentPath;
-        const baseUrl = session.url.endsWith('/') ? session.url.slice(0, -1) : session.url;
-        const targetUrl = `${baseUrl}/${cleanPath}`;
+        const cleanPath = currentPath.startsWith('/') ? currentPath : `/${currentPath}`;
 
         const response = await fetch('/api/sap/proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             method: 'GET',
-            url: targetUrl,
+            path: cleanPath,
             token: session.token
           })
         });
@@ -1203,6 +1225,7 @@ export const useStore = create<AppState>((set, get) => ({
       const mappedInvoices: Invoice[] = allSapInvoices.map((sapInvoice: any) => ({
         docEntry: sapInvoice.DocEntry,
         docNum: sapInvoice.DocNum,
+        folioNum: sapInvoice.FolioNumber,
         cardCode: sapInvoice.CardCode,
         cardName: sapInvoice.CardName || sapInvoice.CardCode, 
         docDate: sapInvoice.DocDate,
@@ -1235,6 +1258,7 @@ export const useStore = create<AppState>((set, get) => ({
           lineStatus: line.LineStatus,
           baseType: line.BaseType,
           baseEntry: line.BaseEntry,
+          baseLine: line.BaseLine,
           baseRef: line.BaseRef
         }))
       }));
@@ -1253,7 +1277,7 @@ export const useStore = create<AppState>((set, get) => ({
   generateCreditNote: async (docEntry: number) => {
     try {
       const { session, invoices } = get();
-      if (!session.url || !session.token) throw new Error("No hay sesi\u00f3n para interactuar con SAP");
+      if (!session.token) throw new Error("No hay sesi\u00f3n para interactuar con SAP");
 
       const invoice = invoices.find(inv => inv.docEntry === docEntry);
       if (!invoice) throw new Error("Factura no encontrada en el estado");
@@ -1268,6 +1292,10 @@ export const useStore = create<AppState>((set, get) => ({
         Comments: `Nota de Crédito basada en Factura Nro: ${invoice.docNum}`,
         Indicator: "61", // Typically 61 is Note of Credit in Chilean Localization, adjust if needed
         BPL_IDAssignedToInvoice: parseInt(invoice.bplid, 10),
+        U_EXX_FE_TpoRef: 33,
+        U_EXX_FE_Folio: String(invoice.folioNum),
+        U_EXX_FE_Fecha: parseDateToSAP(invoice.docDate),
+        U_EXX_FE_CodRef: 1,
         DocumentLines: invoice.documentLines.map(line => ({
           BaseType: 13,
           BaseEntry: invoice.docEntry,
@@ -1283,7 +1311,7 @@ export const useStore = create<AppState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'POST',
-          url: `${session.url}/CreditNotes`,
+          path: `/CreditNotes`,
           body: payload,
           token: session.token
         })
@@ -1344,7 +1372,7 @@ export const useStore = create<AppState>((set, get) => ({
     if (daysToDue !== '' && daysToDue !== undefined) {
        // Filter by DocDueDate <= today + daysToDue
        const targetDate = new Date();
-       targetDate.setDate(targetDate.getDate() + daysToDue);
+       targetDate.setDate(targetDate.getDate() + Number(daysToDue));
        const formattedTargetDate = targetDate.toISOString().split('T')[0];
        filterClauses.push(`DocDueDate le '${formattedTargetDate}'`);
     } else {
@@ -1368,23 +1396,21 @@ export const useStore = create<AppState>((set, get) => ({
     set({ isFetchingPurchases: true, selectedPurchases: [] });
 
     try {
-      if (!session.url || !session.token) throw new Error("No hay sesi\u00f3n para descargar transacciones");
+      if (!session.token) throw new Error("No hay sesi\u00f3n para descargar transacciones");
 
       let allSapPurchases: any[] = [];
       let currentPath = initialOdataQuery;
       let hasNextPage = true;
 
       while (hasNextPage) {
-        const cleanPath = currentPath.startsWith('/') ? currentPath.substring(1) : currentPath;
-        const baseUrl = session.url.endsWith('/') ? session.url.slice(0, -1) : session.url;
-        const targetUrl = `${baseUrl}/${cleanPath}`;
+        const cleanPath = currentPath.startsWith('/') ? currentPath : `/${currentPath}`;
 
         const response = await fetch('/api/sap/proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             method: 'GET',
-            url: targetUrl,
+            path: cleanPath,
             token: session.token
           })
         });
@@ -1439,7 +1465,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   linkInvoiceToOrder: async (invoiceDocEntry: number, orderDocNum: number) => {
     const { session } = get();
-    if (!session.url || !session.token) {
+    if (!session.token) {
       alert("No hay sesión activa.");
       return;
     }
@@ -1450,7 +1476,7 @@ export const useStore = create<AppState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'PATCH',
-          url: `${session.url}/Invoices(${invoiceDocEntry})`,
+          path: `/Invoices(${invoiceDocEntry})`,
           body: { U_Orden_Venta: String(orderDocNum) },
           token: session.token
         })
@@ -1476,7 +1502,7 @@ export const useStore = create<AppState>((set, get) => ({
   paySelectedInvoices: async (transferAccount: string, reference: string) => {
     const { session, selectedPurchases, purchaseInvoices, filters } = get();
     if (selectedPurchases.length === 0) return;
-    if (!session.url || !session.token) {
+    if (!session.token) {
       alert("No hay sesión activa para pagar.");
       return;
     }
@@ -1531,7 +1557,7 @@ export const useStore = create<AppState>((set, get) => ({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               method: 'POST',
-              url: `${session.url}/VendorPayments`,
+              path: `/VendorPayments`,
               body: payload,
               token: session.token
             })

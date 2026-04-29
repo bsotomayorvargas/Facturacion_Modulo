@@ -7,6 +7,7 @@ import { DataTable } from './DataTable';
 import { ArrowRight, MoreVertical, CheckCircle2, AlertTriangle, XCircle, Send, FileQuestion, Link as LinkIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import LinkOrderModal from '../LinkOrderModal';
+import { ConfirmationModal } from '../ConfirmationModal';
 
 interface InvoiceTableProps {
   data: Invoice[];
@@ -16,6 +17,8 @@ export function InvoiceTable({ data }: InvoiceTableProps) {
   const { generateCreditNote } = useStore();
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [linkingInvoice, setLinkingInvoice] = useState<Invoice | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; invoice: Invoice | null }>({ isOpen: false, invoice: null });
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const columns = useMemo<ColumnDef<Invoice>[]>(() => [
     {
@@ -177,7 +180,7 @@ export function InvoiceTable({ data }: InvoiceTableProps) {
                 >
                   <button 
                     onClick={() => {
-                      generateCreditNote(inv.docEntry);
+                      setConfirmModal({ isOpen: true, invoice: inv });
                       setActiveMenu(null);
                     }}
                     className="w-full text-left px-4 py-2 text-xs text-red-600 hover:bg-red-50 font-medium transition-colors"
@@ -206,6 +209,27 @@ export function InvoiceTable({ data }: InvoiceTableProps) {
         isOpen={linkingInvoice !== null}
         invoice={linkingInvoice}
         onClose={() => setLinkingInvoice(null)}
+      />
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        onClose={() => !isProcessing && setConfirmModal({ isOpen: false, invoice: null })}
+        onConfirm={async () => {
+          if (confirmModal.invoice) {
+            setIsProcessing(true);
+            await generateCreditNote(confirmModal.invoice.docEntry);
+            setIsProcessing(false);
+            setConfirmModal({ isOpen: false, invoice: null });
+          }
+        }}
+        title={`Anular Factura Nº ${confirmModal.invoice?.docNum}`}
+        actionType="credit-note"
+        data={{
+          docNum: confirmModal.invoice?.docNum,
+          clientName: confirmModal.invoice?.cardName,
+          totalAmount: confirmModal.invoice?.totalNet,
+          project: confirmModal.invoice?.project,
+        }}
+        isLoading={isProcessing}
       />
     </>
   );

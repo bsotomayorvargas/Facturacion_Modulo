@@ -1,6 +1,11 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import nodemailer from 'nodemailer';
+import dotenv from 'dotenv';
+
+// Load environment variables from .env file
+dotenv.config();
 
 // CRITICAL FOR SAP B1: Bypasses Self-Signed Certificate validation over LAN/VPN
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -50,7 +55,16 @@ async function startServer() {
         return res.status(401).json({ error: 'Acceso denegado. Autenticación de aplicación requerida.' });
       }
 
-      const { method, url, body, token } = req.body;
+      const { method, path, body, token } = req.body;
+      
+      const baseUrl = process.env.SAP_B1_URL;
+      if (!baseUrl) {
+        return res.status(500).json({ error: 'Falta configurar SAP_B1_URL en el servidor local.' });
+      }
+
+      const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+      const cleanPath = path.startsWith('/') ? path : `/${path}`;
+      const url = `${cleanBaseUrl}${cleanPath}`;
       
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -81,6 +95,92 @@ async function startServer() {
       res.status(response.status).json(data);
     } catch (error: any) {
       console.error("Proxy error:", error);
+      console.error("Proxy error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // === EMAIL SEND PROXY (MOCK FOR VERCEL SERVERLESS) ===
+  app.post('/api/email/send', async (req, res) => {
+    try {
+      const { docNum, projectName, totalAmount, clientName, comments, isBatch, destinatario } = req.body;
+
+      const user = process.env.GMAIL_USER;
+      const pass = process.env.GMAIL_APP_PASSWORD;
+
+      if (!user || !pass) {
+        console.warn("No se configuraron GMAIL_USER o GMAIL_APP_PASSWORD en .env. Simulando envío de correo local.");
+        return res.status(200).json({ success: true, messageId: 'simulated-local-mail', warning: 'No env vars set' });
+      }
+
+      const transporter = nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,
+        auth: { user, pass },
+      });
+
+      const subject = isBatch 
+        ? `Aviso Facturación Masiva SAP - Módulo Portal` 
+        : `Aviso Generación Factura SAP - OV ${docNum} - ${projectName || "Sin Proyecto"}`;
+      
+      let textBody = `Estimados,\n\nSe ha instruido la generación de facturación desde el portal para los siguientes datos:\n\n`;
+      if (!isBatch) {
+        textBody += `- OV Origen: ${docNum}\n- Proyecto: ${projectName || "N/A"}\n- Cliente: ${clientName || "N/A"}\n- Monto a Facturar: $${Number(totalAmount).toLocaleString('es-CL')}\n\n`;
+      } else {
+        textBody += `- Cantidad de Documentos (OVs): ${docNum}\n- Monto Total Neto de la operación: $${Number(totalAmount).toLocaleString('es-CL')}\n\n`;
+      }
+      
+      textBody += `Justificación / Comentario del emisor:\n"${comments || 'Sin comentarios adicionales.'}"\n\nSaludos cordiales,\nSistema de Facturación y Pagos Copec Flux`;
+
+      const mailOptions = {
+        from: `"Portal Facturación Copec Flux" <${user}>`,
+        to: destinatario || 'cdg@fluxsolar.cl',
+        subject,
+        text: textBody,
+      };
+
+      const info = await transporter.sendMail(mailOptions);
+      console.log("Local Server: Email sent: %s", info.messageId);
+
+      return res.status(200).json({ success: true, messageId: info.messageId });
+    } catch (error: any) {
+      console.error("Local Server: Error sending email:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/email/nomina', async (req, res) => {
+    try {
+      const { subject, body, destinatario } = req.body;
+      const user = process.env.GMAIL_USER;
+      const pass = process.env.GMAIL_APP_PASSWORD;
+
+      if (!user || !pass) {
+        console.warn("No se configuraron GMAIL_USER o GMAIL_APP_PASSWORD en .env. Simulando envío de correo local.");
+        return res.status(200).json({ success: true, messageId: 'simulated-local-mail', warning: 'No env vars set' });
+      }
+
+      const transporter = nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,
+        auth: { user, pass },
+      });
+
+      const mailOptions = {
+        from: `"Portal Pagos Copec Flux" <${user}>`,
+        to: destinatario,
+        subject,
+        text: body,
+      };
+
+      const info = await transporter.sendMail(mailOptions);
+      console.log("Local Server: Nómina Email sent: %s", info.messageId);
+
+      return res.status(200).json({ success: true, messageId: info.messageId });
+    } catch (error: any) {
+      console.error("Local Server: Error sending nómina email:", error);
       res.status(500).json({ error: error.message });
     }
   });

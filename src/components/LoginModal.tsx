@@ -6,8 +6,6 @@ interface LoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   isConnected: boolean;
-  inputUrl: string;
-  setInputUrl: (v: string) => void;
   inputCompanyDb: string;
   setInputCompanyDb: (v: string) => void;
   inputUser: string;
@@ -19,7 +17,6 @@ interface LoginModalProps {
 
 export function LoginModal({
   isOpen, onClose, isConnected,
-  inputUrl, setInputUrl,
   inputCompanyDb, setInputCompanyDb,
   inputUser, setInputUser,
   inputPass, setInputPass,
@@ -71,26 +68,16 @@ export function LoginModal({
                   
                   <div className="space-y-3">
                     <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-1">URL Base API</label>
-                      <input 
-                        type="text" 
-                        placeholder="https://sbo-server:50000/b1s/v2" 
-                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 text-slate-800 placeholder-slate-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm disabled:bg-slate-50 disabled:text-slate-500" 
-                        value={inputUrl}
-                        onChange={e => setInputUrl(e.target.value)}
-                        disabled={isConnected}
-                      />
-                    </div>
-                    <div>
                       <label className="block text-xs font-medium text-slate-600 mb-1">CompanyDB</label>
-                      <input 
-                        type="text" 
-                        placeholder="Ej: SBOFLUXSOLAR" 
-                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 text-slate-800 placeholder-slate-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm disabled:bg-slate-50 disabled:text-slate-500" 
+                      <select 
+                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 text-slate-800 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm disabled:bg-slate-50 disabled:text-slate-500" 
                         value={inputCompanyDb}
                         onChange={e => setInputCompanyDb(e.target.value)}
                         disabled={isConnected}
-                      />
+                      >
+                        <option value="SBOFLUXSOLAR">SBOFLUXSOLAR (Productivo)</option>
+                        <option value="DEV_SBOFLUXSOLAR">DEV_SBOFLUXSOLAR (Development)</option>
+                      </select>
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-600 mb-1">Usuario</label>
@@ -123,7 +110,7 @@ export function LoginModal({
                         onClose();
                       }}
                       className="w-full py-2.5 mt-4 bg-blue-600 text-white text-sm font-semibold rounded-md hover:bg-blue-700 transition-colors shadow-md disabled:bg-blue-400"
-                      disabled={!inputUrl || !inputUser || !inputPass}
+                      disabled={!inputCompanyDb || !inputUser || !inputPass}
                     >
                       Conectar a SAP B1
                     </button>

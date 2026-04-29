@@ -22,8 +22,20 @@ export const PurchaseInvoicesView: React.FC = () => {
   const [isPaying, setIsPaying] = useState(false);
   const [nominaId, setNominaId] = useState(`N-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`);
 
-  // Derive visible purchases (only open ones basically)
-  const visiblePurchases = purchaseInvoices.filter(o => o.documentStatus !== 'bost_Close' && o.documentStatus !== 'bost_Cancel');
+  // Derive visible purchases (only open ones basically and apply due date filter)
+  const visiblePurchases = purchaseInvoices.filter(o => {
+    if (o.documentStatus === 'bost_Close' || o.documentStatus === 'bost_Cancel') return false;
+    
+    if (filters.daysToDue !== undefined && filters.daysToDue !== '') {
+      const targetDate = new Date();
+      targetDate.setDate(targetDate.getDate() + Number(filters.daysToDue));
+      const formattedTargetDate = targetDate.toISOString().split('T')[0];
+      
+      // o.docDueDate is YYYY-MM-DD, string comparison works perfectly
+      if (o.docDueDate > formattedTargetDate) return false;
+    }
+    return true;
+  });
   const allSelected = visiblePurchases.length > 0 && selectedPurchases.length === visiblePurchases.length;
 
   const handleDownloadTxt = () => {
@@ -110,18 +122,6 @@ export const PurchaseInvoicesView: React.FC = () => {
               </div>
             </div>
           )}
-          <button 
-            onClick={() => fetchPurchaseInvoices()}
-            disabled={isFetchingPurchases}
-            className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-sm bg-blue-950 text-white hover:bg-blue-900 transition-colors"
-          >
-            {isFetchingPurchases ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Search className="w-3.5 h-3.5" />
-            )}
-            <span>Buscar Facturas</span>
-          </button>
         </div>
       </div>
 
@@ -132,7 +132,13 @@ export const PurchaseInvoicesView: React.FC = () => {
             <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Vencimiento</label>
             <select
               value={filters.daysToDue !== undefined ? filters.daysToDue : ''}
-              onChange={(e) => setFilters({ daysToDue: e.target.value === '' ? '' : Number(e.target.value) })}
+              onChange={(e) => {
+                setFilters({ daysToDue: e.target.value === '' ? '' : Number(e.target.value) });
+                // Disparar la recarga de SAP inmediatamente al cambiar el filtro
+                setTimeout(() => {
+                  fetchPurchaseInvoices();
+                }, 0);
+              }}
               className="h-8 text-xs border border-slate-300 rounded-sm px-2 bg-slate-50 hover:bg-white focus:border-blue-600 focus:outline-none w-40"
             >
               <option value="">Cualquier fecha</option>
@@ -141,20 +147,6 @@ export const PurchaseInvoicesView: React.FC = () => {
               <option value={7}>Vencen en &le; 7 días</option>
               <option value={15}>Vencen en &le; 15 días</option>
             </select>
-          </div>
-          <div className="flex flex-col space-y-1">
-            <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Búsqueda rápida</label>
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                value={filters.searchQuery}
-                onChange={(e) => setFilters({ searchQuery: e.target.value })}
-                placeholder="RUT, Nombre o N° Factura..."
-                className="h-8 pl-8 pr-3 text-xs border border-slate-300 rounded-sm w-64 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600/20"
-                onKeyDown={(e) => e.key === 'Enter' && fetchPurchaseInvoices()}
-              />
-            </div>
           </div>
         </div>
       </div>

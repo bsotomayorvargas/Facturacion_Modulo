@@ -23,6 +23,8 @@ const formatSheetStatus = (status?: string) => {
 };
 
 import { AppLogin } from './components/AppLogin';
+import { ConfirmationModal, ConfirmationActionType, ConfirmationData } from './components/ConfirmationModal';
+import { sendFacturacionEmail } from './lib/emailService';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -34,23 +36,30 @@ export default function App() {
     setFilters, selectOrder, toggleSubline, toggleAllSublines, connect, disconnect,
     syncMasterData, fetchOrders,
     batchSelectedOrders, isProcessingBatch, batchProgress, toggleBatchSelection, toggleAllBatchSelection,
-    regularizeProjects, activeTab, setActiveTab, invoices, isFetchingInvoices, fetchInvoices, generateCreditNote
+    regularizeProjects, activeTab, setActiveTab, invoices, isFetchingInvoices, fetchInvoices, generateCreditNote,
+    fetchPurchaseInvoices, isFetchingPurchases
   } = useStore();
 
-  const [inputUrl, setInputUrl] = useState(session.url);
   const [inputCompanyDb, setInputCompanyDb] = useState(session.companyDb);
   const [inputUser, setInputUser] = useState(session.user);
   const [inputPass, setInputPass] = useState('');
   const [isFetchingOrders, setIsFetchingOrders] = useState(false);
   const [editingOrder, setEditingOrder] = useState<number | null>(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    actionType: ConfirmationActionType;
+    data: ConfirmationData;
+    onConfirm: (comment: string) => void;
+  }>({ isOpen: false, title: '', actionType: 'batch-invoice', data: {}, onConfirm: () => {} });
 
   if (!isAuthenticated) {
     return (
       <AppLogin 
         onLogin={() => {
           localStorage.setItem('app_auth', 'true');
-          setIsAuthenticated(true);
+          window.location.reload();
         }} 
       />
     );
@@ -111,18 +120,25 @@ export default function App() {
     setFilters({ [key]: formatted.slice(0, 10) });
   };
 
-  const handleConnect = () => {
-    if (inputUrl && inputCompanyDb && inputUser && inputPass) {
-      connect(inputUrl, inputCompanyDb, inputUser, inputPass);
+  const handleConnect = async () => {
+    if (inputCompanyDb && inputUser && inputPass) {
+      try {
+        await connect(inputCompanyDb, inputUser, inputPass);
+        setIsLoginModalOpen(false);
+      } catch (error: any) {
+        alert(error.message);
+      }
     }
   };
 
   const handleFetchOrders = async () => {
     setIsFetchingOrders(true);
     if (activeTab === 'OVs') {
-      await fetchOrders();
-    } else {
+      await Promise.all([fetchOrders(), fetchInvoices()]);
+    } else if (activeTab === 'Facturas') {
       await fetchInvoices();
+    } else if (activeTab === 'Compras') {
+      await fetchPurchaseInvoices();
     }
     setIsFetchingOrders(false);
   };
@@ -429,15 +445,15 @@ export default function App() {
               <div className="w-full xl:w-auto">
                 <button 
                   onClick={handleFetchOrders}
-                  disabled={!session.isConnected || isFetchingOrders}
+                  disabled={!session.isConnected || isFetchingOrders || (activeTab === 'Compras' && isFetchingPurchases)}
                   className="w-full xl:w-[160px] h-[38px] flex items-center justify-center gap-2 bg-blue-700 text-white text-sm font-semibold rounded-md hover:bg-blue-800 transition-colors shadow-md shadow-blue-500/20 disabled:opacity-60 disabled:shadow-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 outline-none"
                 >
-                  {isFetchingOrders ? (
+                  {isFetchingOrders || (activeTab === 'Compras' && isFetchingPurchases) ? (
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   ) : (
                     <Database className="w-4 h-4" />
                   )}
-                  {isFetchingOrders ? 'Extrayendo...' : 'Consultar SAP'}
+                  {isFetchingOrders || (activeTab === 'Compras' && isFetchingPurchases) ? 'Extrayendo...' : 'Consultar SAP'}
                 </button>
               </div>
 
@@ -519,13 +535,53 @@ export default function App() {
                   ) : (
                     <div className="flex items-center gap-2">
                       <button 
-                        onClick={() => useStore.getState().invoiceBatchOrders()}
+                        onClick={() => {
+                          setConfirmConfig({
+                            isOpen: true,
+                            title: 'Confirmar Facturación Masiva',
+                            actionType: 'batch-invoice',
+                            data: {
+                              affectedCount: batchSelectedOrders.length
+                            },
+                            onConfirm: (comment) => {
+                              useStore.getState().invoiceBatchOrders();
+                              setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                              if (comment) {
+                                const totalBatchAmount = useStore.getState().orders
+                                  .filter(o => batchSelectedOrders.includes(o.docEntry))
+                                  .reduce((sum, o) => sum + o.totalNet, 0);
+                                  
+                                sendFacturacionEmail(
+                                  batchSelectedOrders.length,
+                                  "",
+                                  totalBatchAmount,
+                                  "",
+                                  comment,
+                                  true
+                                );
+                              }
+                            }
+                          });
+                        }}
                         className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 transition-colors bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-sm border border-emerald-200 shadow-sm"
                       >
                         Facturar Masivo
                       </button>
                       <button 
-                        onClick={() => useStore.getState().closeBatchOrders()}
+                        onClick={() => {
+                          setConfirmConfig({
+                            isOpen: true,
+                            title: 'Confirmar Cierre Masivo en SAP',
+                            actionType: 'batch-close',
+                            data: {
+                              affectedCount: batchSelectedOrders.length
+                            },
+                            onConfirm: () => {
+                              useStore.getState().closeBatchOrders();
+                              setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                            }
+                          });
+                        }}
                         className="text-[11px] font-bold text-red-700 hover:text-red-800 transition-colors bg-red-50 hover:bg-red-100 px-3 py-1 rounded-sm border border-red-200 shadow-sm"
                       >
                         Cerrar Masivo
@@ -593,8 +649,6 @@ export default function App() {
         isOpen={isLoginModalOpen}
         onClose={() => setIsLoginModalOpen(false)}
         isConnected={session.isConnected}
-        inputUrl={inputUrl}
-        setInputUrl={setInputUrl}
         inputCompanyDb={inputCompanyDb}
         setInputCompanyDb={setInputCompanyDb}
         inputUser={inputUser}
@@ -602,6 +656,12 @@ export default function App() {
         inputPass={inputPass}
         setInputPass={setInputPass}
         handleConnect={handleConnect}
+      />
+
+      <ConfirmationModal 
+        {...confirmConfig} 
+        onClose={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))} 
+        isLoading={isProcessingBatch} 
       />
     </div>
   );

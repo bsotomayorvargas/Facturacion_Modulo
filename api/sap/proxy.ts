@@ -17,8 +17,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { method, url, body, token } = req.body;
+    const { method, path, body, token } = req.body;
+    
+    const baseUrl = process.env.SAP_B1_URL;
+    if (!baseUrl) {
+      return res.status(500).json({ error: 'Falta configurar SAP_B1_URL en el servidor.' });
+    }
 
+    const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${cleanBaseUrl}${cleanPath}`;
     
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

@@ -1,5 +1,4 @@
 export interface Session {
-  url: string;
   companyDb: string;
   user: string;
   token: string | null;
@@ -40,6 +39,7 @@ export interface Subline {
   lineStatus: string; // "bost_Open" or "bost_Close"
   baseType?: number;
   baseEntry?: number;
+  baseLine?: number;
   baseRef?: string;
 }
 
@@ -90,6 +90,7 @@ export interface ODataV2InvoicePayload {
   DocCurrency: string;             // User's DocCur
   CardCode: string;
   Comments: string;
+  JournalMemo?: string;
   Indicator: string;               // "33"
   U_Orden_Venta: string;           // Custom field addition
   DocumentLines: Array<{
@@ -120,6 +121,7 @@ export interface SLBusinessPlacesResponse {
 export interface Invoice {
   docEntry: number;
   docNum: number;
+  folioNum?: number;
   cardCode: string;
   cardName: string;
   docDate: string;
@@ -150,6 +152,10 @@ export interface CreditNotePayload {
   Comments: string;
   Indicator: string;
   BPL_IDAssignedToInvoice: number;
+  U_EXX_FE_TpoRef: number;
+  U_EXX_FE_Folio: string;
+  U_EXX_FE_Fecha: string;
+  U_EXX_FE_CodRef: number;
   DocumentLines: Array<{
     BaseType: number;      // 13 for Invoice
     BaseEntry: number;     // Mapping source Invoice DocEntry

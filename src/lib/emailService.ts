@@ -1,6 +1,6 @@
 import { PurchaseInvoice } from "../types";
 
-export const sendNominaEmail = (invoices: PurchaseInvoice[]) => {
+export const sendNominaEmail = async (invoices: PurchaseInvoice[]) => {
   if (invoices.length === 0) {
     alert("No hay facturas seleccionadas para enviar en la nómina.");
     return;
@@ -28,9 +28,60 @@ export const sendNominaEmail = (invoices: PurchaseInvoice[]) => {
   
   body += `\nSaludos cordiales,\nSistema de Facturación y Pagos Copec Flux`;
 
-  const encodedBody = encodeURIComponent(body);
+  const emailDestino = prompt("Ingrese el correo donde desea recibir la nómina de pago (para pruebas):", "cdg@fluxsolar.cl");
+  if (!emailDestino) return;
+
+  try {
+    const response = await fetch('/api/email/nomina', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject: decodeURIComponent(subject),
+        body: body,
+        destinatario: emailDestino
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      alert(`Error enviando correo: ${errorData.error || 'Desconocido'}`);
+      console.error("Error enviando nómina:", errorData);
+    } else {
+      alert("✅ ¡Correo de nómina enviado exitosamente a " + emailDestino + "!");
+    }
+  } catch (error) {
+    console.error("Error de red al intentar enviar nómina:", error);
+    alert("Error de red al intentar enviar el correo de nómina.");
+  }
+};
+
+export const sendFacturacionEmail = async (docNum: number | string, projectName: string, totalAmount: number, clientName: string, comments: string, isBatch: boolean = false) => {
+  const destinatario = "cdg@fluxsolar.cl";
   
-  // Usar mailto para levantar el cliente de correo del usuario (Outlook)
-  // De esta forma el usuario puede agregar el archivo TXT descargado de forma manual al correo
-  window.location.href = `mailto:?subject=${subject}&body=${encodedBody}`;
+  try {
+    const response = await fetch('/api/email/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        docNum,
+        projectName,
+        totalAmount,
+        clientName,
+        comments,
+        isBatch,
+        destinatario
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error("Error enviando correo de facturación:", errorData);
+    } else {
+      console.log("Correo de facturación enviado exitosamente a", destinatario);
+    }
+  } catch (error) {
+    console.error("Error de red al intentar enviar el correo:", error);
+  }
 };

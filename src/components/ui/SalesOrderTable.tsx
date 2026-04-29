@@ -3,9 +3,11 @@ import { ColumnDef, ColumnFiltersState } from '@tanstack/react-table';
 import { useStore } from '../../store';
 import { SalesOrder } from '../../types';
 import { formatCurrency, formatDate } from '../../lib/utils';
+import { sendFacturacionEmail } from '../../lib/emailService';
 import { DataTable } from './DataTable';
 import { ArrowRight, ChevronDown, ChevronRight, MoreVertical, CheckCircle2, Search, Filter } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { ConfirmationModal, ConfirmationActionType, ConfirmationData } from '../ConfirmationModal';
 
 const formatSheetStatus = (status?: string) => {
   switch(status) {
@@ -38,13 +40,22 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
     getSimulationPayload,
     generateInvoice,
     closeOrder,
-    invoiceFullOrder
+    invoiceFullOrder,
+    invoices
   } = useStore();
 
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    actionType: ConfirmationActionType;
+    data: ConfirmationData;
+    onConfirm: (comment: string) => void;
+  }>({ isOpen: false, title: '', actionType: 'invoice', data: {}, onConfirm: () => {} });
+
   const jsonPayload = selectedOrderEntry ? getSimulationPayload() : null;
 
   const columns = useMemo<ColumnDef<SalesOrder>[]>(() => [
@@ -176,6 +187,38 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
       meta: { className: "w-28 text-right" }
     },
     {
+      id: 'avanceFacturacion',
+      header: () => <div className="text-right w-full">Facturado / Saldo</div>,
+      cell: ({ row }) => {
+        const o = row.original;
+        
+        // Calcular lo facturado para esta OV cruzando baseEntry
+        const totalInvoiced = invoices.reduce((acc, inv) => {
+          if (inv.isCancelled || inv.documentStatus === 'bost_Cancel') return acc;
+          const matchingLines = inv.documentLines.filter(l => l.baseEntry === o.docEntry);
+          return acc + matchingLines.reduce((sum, l) => sum + (l.price * l.quantity), 0);
+        }, 0);
+        
+        const saldo = o.totalNet - totalInvoiced;
+        const pct = o.totalNet > 0 ? Math.min(100, Math.round((totalInvoiced / o.totalNet) * 100)) : 0;
+        const isComplete = pct >= 100;
+
+        return (
+          <div className="flex flex-col items-end gap-1 w-full" title={`Facturado: ${formatCurrency(totalInvoiced)} | Saldo: ${formatCurrency(saldo)}`}>
+             <div className="text-[10px] font-mono tabular-nums tracking-tight">
+               <span className={isComplete ? "text-emerald-600 font-bold" : "text-slate-500"}>{formatCurrency(totalInvoiced)}</span>
+               <span className="text-slate-300 mx-1">/</span>
+               <span className={isComplete ? "text-slate-400 line-through" : "text-red-600 font-medium"}>{formatCurrency(saldo)}</span>
+             </div>
+             <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                <div className={`h-full ${isComplete ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }}></div>
+             </div>
+          </div>
+        );
+      },
+      meta: { className: "w-36 text-right" }
+    },
+    {
       accessorKey: 'sheetStatus',
       header: () => <div className="text-center w-full">Estado</div>,
       cell: ({ row }) => {
@@ -218,7 +261,35 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
                 >
                   <button 
                     className="px-4 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 text-left transition-colors"
-                    onClick={() => { setActiveMenu(null); invoiceFullOrder(o.docEntry); }}
+                    onClick={() => { 
+                      setActiveMenu(null); 
+                      setConfirmConfig({
+                        isOpen: true,
+                        title: 'Confirmar Facturación Total',
+                        actionType: 'invoice',
+                        data: {
+                          docNum: o.docNum,
+                          clientName: o.cardName,
+                          project: o.project,
+                          totalAmount: o.totalNet,
+                          itemCount: o.documentLines.length
+                        },
+                        onConfirm: (comment) => {
+                          invoiceFullOrder(o.docEntry);
+                          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                          if (comment) {
+                            sendFacturacionEmail(
+                              o.docNum,
+                              o.project || "Sin Proyecto",
+                              o.totalNet,
+                              o.cardName,
+                              comment,
+                              false
+                            );
+                          }
+                        }
+                      });
+                    }}
                   >
                     Facturar Orden
                   </button>
@@ -231,7 +302,23 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
                   <div className="h-px bg-slate-100 my-1 cursor-default"></div>
                   <button 
                     className="px-4 py-2 text-[11px] font-semibold text-red-600 hover:bg-red-50 text-left transition-colors"
-                    onClick={() => { setActiveMenu(null); closeOrder(o.docEntry); }}
+                    onClick={() => { 
+                      setActiveMenu(null); 
+                      setConfirmConfig({
+                        isOpen: true,
+                        title: 'Confirmar Cierre de Orden en SAP',
+                        actionType: 'close',
+                        data: {
+                          docNum: o.docNum,
+                          clientName: o.cardName,
+                          project: o.project
+                        },
+                        onConfirm: () => {
+                          closeOrder(o.docEntry);
+                          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                        }
+                      });
+                    }}
                   >
                     Cerrar Orden
                   </button>
@@ -248,7 +335,34 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
 
   const handleInvoice = () => {
     if (selectedOrderEntry) {
-      generateInvoice();
+      const order = data.find(o => o.docEntry === selectedOrderEntry);
+      if (order) {
+        setConfirmConfig({
+          isOpen: true,
+          title: 'Confirmar Facturación Parcial',
+          actionType: 'invoice',
+          data: {
+            docNum: order.docNum,
+            clientName: order.cardName,
+            project: order.project,
+            itemCount: selectedSublines.length
+          },
+          onConfirm: (comment) => {
+            generateInvoice();
+            setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+            if (comment) {
+              sendFacturacionEmail(
+                order.docNum,
+                order.project || "Sin Proyecto",
+                order.totalNet, // Idealmente el neto de la selección parcial, pero order.totalNet sirve por ahora
+                order.cardName,
+                comment,
+                false
+              );
+            }
+          }
+        });
+      }
     }
   };
 
@@ -275,8 +389,10 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
                   <th className="py-2 px-3 w-28 text-center border-r border-slate-200">STATUS</th>
                   <th className="py-2 px-3 w-24 border-r border-slate-200">PROYECTO</th>
                   <th className="py-2 px-3 w-[100px] border-r border-slate-200">C. COSTO</th>
-                  <th className="py-2 px-3 w-16 text-right border-r border-slate-200">CANT.</th>
-                  <th className="py-2 px-3 w-32 text-right border-r border-slate-200">PRECIO UN.</th>
+                  <th className="py-2 px-3 w-12 text-right border-r border-slate-200">CANT.</th>
+                  <th className="py-2 px-3 w-12 text-right border-r border-slate-200">FACT.</th>
+                  <th className="py-2 px-3 w-12 text-right border-r border-slate-200">SALDO</th>
+                  <th className="py-2 px-3 w-28 text-right border-r border-slate-200">PRECIO UN.</th>
                   <th className="py-2 px-3 w-12 text-center border-r border-slate-200">
                      <button 
                        onClick={handleInvoice}
@@ -291,11 +407,19 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {o.documentLines.map(line => {
+                  const invoicedQty = invoices.reduce((acc, inv) => {
+                    if (inv.isCancelled || inv.documentStatus === 'bost_Cancel') return acc;
+                    const matchingLine = inv.documentLines.find(l => l.baseEntry === o.docEntry && l.baseLine === line.lineNum);
+                    return acc + (matchingLine?.quantity || 0);
+                  }, 0);
+                  const pendingQty = line.quantity - invoicedQty;
+                  const isLineComplete = pendingQty <= 0;
+
                   const isChecked = selectedSublines.includes(line.lineNum);
                   const isOpen = line.lineStatus === 'bost_Open';
                   const isAnomaly = o.sheetStatus === 'anomaly';
                   
-                  const isLineLocked = !isOpen || isAnomaly || o.sheetStatus === 'pending' || o.sheetStatus === 'pending_te4' || (
+                  const isLineLocked = !isOpen || isAnomaly || o.sheetStatus === 'pending' || o.sheetStatus === 'pending_te4' || isLineComplete || (
                     o.sheetStatus === 'ready_anticipo' && line.lineNum !== 0
                   ) || (
                     o.sheetStatus === 'ready_cierre' && line.lineNum !== 1
@@ -325,8 +449,10 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
                       </td>
                       <td className="py-1.5 px-3 w-24 text-slate-500 truncate border-r border-slate-200" title={line.project}>{line.project || "-"}</td>
                       <td className="py-1.5 px-3 w-[100px] text-slate-500 truncate border-r border-slate-200" title={line.costCenter}>{line.costCenter || "-"}</td>
-                      <td className="py-1.5 px-3 w-16 text-right font-semibold text-slate-600 border-r border-slate-200 tabular-nums">{line.quantity}</td>
-                      <td className="py-1.5 px-3 w-32 text-right font-mono text-slate-600 border-r border-slate-200 tabular-nums">{formatCurrency(line.price)} {o.currency && o.currency !== 'CLP' ? `(${o.currency})` : ''}</td>
+                      <td className="py-1.5 px-3 w-12 text-right font-semibold text-slate-600 border-r border-slate-200 tabular-nums">{line.quantity}</td>
+                      <td className="py-1.5 px-3 w-12 text-right font-semibold text-emerald-600 border-r border-slate-200 tabular-nums">{invoicedQty}</td>
+                      <td className={`py-1.5 px-3 w-12 text-right font-bold border-r border-slate-200 tabular-nums ${isLineComplete ? 'text-slate-300 line-through' : 'text-red-500'}`}>{pendingQty}</td>
+                      <td className="py-1.5 px-3 w-28 text-right font-mono text-slate-600 border-r border-slate-200 tabular-nums">{formatCurrency(line.price)} {o.currency && o.currency !== 'CLP' ? `(${o.currency})` : ''}</td>
                       <td className="py-1.5 px-3 w-12 text-center border-r border-slate-200">
                         <button 
                           onClick={() => setIsSimulating(!isSimulating)}
@@ -436,6 +562,11 @@ export function SalesOrderTable({ data, onEditOrder }: SalesOrderTableProps) {
           }}
         />
       </div>
+      <ConfirmationModal 
+        {...confirmConfig} 
+        onClose={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))} 
+        isLoading={isProcessingBatch} 
+      />
     </div>
   );
 }
